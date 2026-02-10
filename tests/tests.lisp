@@ -182,3 +182,176 @@
       (cl-rich-text/harfbuzz:hb-font-get-scale font x y)
       (is (= (cffi:mem-ref x :int) 2048)
           "Scale should be set to upem (2048)"))))
+
+;;; ——— Phase 3: Single glyph rendering ———
+
+(defun %glyph-id-for-char (font char-string)
+  "Shape a single character and return its glyph ID. Test helper."
+  (let ((buf (cl-rich-text/harfbuzz:hb-buffer-create)))
+    (cl-rich-text/harfbuzz:hb-buffer-add-utf8 buf char-string -1 0 -1)
+    (cl-rich-text/harfbuzz:hb-buffer-guess-segment-properties buf)
+    (cl-rich-text/harfbuzz:hb-shape font buf (cffi:null-pointer) 0)
+    (cffi:with-foreign-object (len :uint)
+      (let* ((infos (cl-rich-text/harfbuzz:hb-buffer-get-glyph-infos buf len))
+             (glyph-id (cffi:foreign-slot-value
+                        (cffi:mem-aptr infos '(:struct cl-rich-text/harfbuzz:hb-glyph-info-t) 0)
+                        '(:struct cl-rich-text/harfbuzz:hb-glyph-info-t)
+                        'cl-rich-text/harfbuzz::codepoint)))
+        (cl-rich-text/harfbuzz:hb-buffer-destroy buf)
+        glyph-id))))
+
+;; SDF tests
+
+(test shape-to-sdf-basic
+  "shape-to-sdf returns a 1-channel bitmap with correct dimensions"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "A"))
+           (shape (rich-text:glyph-to-shape font gid))
+           (bmp (rich-text:shape-to-sdf shape 64 64)))
+      (is-true bmp "Bitmap should not be NIL")
+      (is (= (trivial-sdf:bitmap-width bmp) 64))
+      (is (= (trivial-sdf:bitmap-height bmp) 64))
+      (is (= (trivial-sdf:bitmap-channels bmp) 1)))))
+
+(test shape-to-sdf-content
+  "SDF bitmap has near-boundary and far-outside distance values"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "A"))
+           (shape (rich-text:glyph-to-shape font gid))
+           (bmp (rich-text:shape-to-sdf shape 64 64))
+           (data (trivial-sdf:bitmap-data bmp))
+           (min-v 999.0)
+           (max-v -999.0))
+      (loop for i from 0 below (length data)
+            for v = (aref data i)
+            do (when (< v min-v) (setf min-v v))
+               (when (> v max-v) (setf max-v v)))
+      (is (> max-v 0.3) "SDF should have near-boundary values (> 0.3)")
+      (is (< min-v 0.1) "SDF should have far-outside values (< 0.1)")
+      (is (> (- max-v min-v) 0.2) "SDF should have meaningful distance variation"))))
+
+;; MSDF tests
+
+(test shape-to-msdf-basic
+  "shape-to-msdf returns a 3-channel bitmap with correct dimensions"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "A"))
+           (shape (rich-text:glyph-to-shape font gid))
+           (bmp (rich-text:shape-to-msdf shape 64 64)))
+      (is-true bmp "Bitmap should not be NIL")
+      (is (= (trivial-sdf:bitmap-width bmp) 64))
+      (is (= (trivial-sdf:bitmap-height bmp) 64))
+      (is (= (trivial-sdf:bitmap-channels bmp) 3)))))
+
+(test shape-to-msdf-content
+  "MSDF bitmap has varied channel values spanning inside/outside"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "A"))
+           (shape (rich-text:glyph-to-shape font gid))
+           (bmp (rich-text:shape-to-msdf shape 64 64))
+           (data (trivial-sdf:bitmap-data bmp))
+           (has-inside nil)
+           (has-outside nil))
+      (loop for i from 0 below (length data)
+            for v = (aref data i)
+            do (when (> v 0.6) (setf has-inside t))
+               (when (< v 0.4) (setf has-outside t)))
+      (is-true has-inside "MSDF should have inside values (> 0.6)")
+      (is-true has-outside "MSDF should have outside values (< 0.4)"))))
+
+;; Glyph-level convenience tests
+
+(test glyph-to-sdf-convenience
+  "End-to-end glyph-to-sdf works"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "H"))
+           (bmp (rich-text:glyph-to-sdf font gid 32 32)))
+      (is-true bmp "glyph-to-sdf should return a bitmap")
+      (is (= (trivial-sdf:bitmap-channels bmp) 1)))))
+
+(test glyph-to-msdf-convenience
+  "End-to-end glyph-to-msdf works"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "H"))
+           (bmp (rich-text:glyph-to-msdf font gid 32 32)))
+      (is-true bmp "glyph-to-msdf should return a bitmap")
+      (is (= (trivial-sdf:bitmap-channels bmp) 3)))))
+
+(test glyph-to-sdf-space-returns-nil
+  "glyph-to-sdf returns NIL for blank glyphs (space)"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font " "))
+           (bmp (rich-text:glyph-to-sdf font gid 32 32)))
+      (is-false bmp "glyph-to-sdf should return NIL for space"))))
+
+;; Mesh tests
+
+(test shape-to-mesh-basic
+  "shape-to-mesh returns vertices/indices arrays with correct structure"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "A"))
+           (shape (rich-text:glyph-to-shape font gid)))
+      (multiple-value-bind (vertices indices)
+          (rich-text:shape-to-mesh shape)
+        (is-true vertices "Vertices should not be NIL")
+        (is-true indices "Indices should not be NIL")
+        (is (typep vertices '(simple-array single-float (*))))
+        (is (typep indices '(simple-array (unsigned-byte 32) (*))))
+        (is (zerop (mod (length vertices) 2))
+            "Vertices length should be even (x,y pairs)")
+        (is (zerop (mod (length indices) 3))
+            "Indices length should be multiple of 3 (triangles)")
+        (is (> (length vertices) 0) "Should have some vertices")
+        (is (> (length indices) 0) "Should have some indices")))))
+
+(test shape-to-mesh-indices-valid
+  "All mesh indices are less than vertex count"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "A"))
+           (shape (rich-text:glyph-to-shape font gid)))
+      (multiple-value-bind (vertices indices)
+          (rich-text:shape-to-mesh shape)
+        (let ((vert-count (/ (length vertices) 2)))
+          (loop for i from 0 below (length indices)
+                do (is (< (aref indices i) vert-count)
+                       (format nil "Index ~A (~A) should be < ~A"
+                               i (aref indices i) vert-count))))))))
+
+(test shape-to-mesh-hole-glyph
+  "'A' mesh produces multiple triangles spanning non-zero range"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "A"))
+           (shape (rich-text:glyph-to-shape font gid)))
+      (multiple-value-bind (vertices indices)
+          (rich-text:shape-to-mesh shape)
+        (is (> (/ (length indices) 3) 1)
+            "Should have multiple triangles for 'A'")
+        ;; Check that vertices span a non-zero range
+        (let ((min-x most-positive-single-float)
+              (max-x most-negative-single-float))
+          (loop for i from 0 below (length vertices) by 2
+                for x = (aref vertices i)
+                do (when (< x min-x) (setf min-x x))
+                   (when (> x max-x) (setf max-x x)))
+          (is (> (- max-x min-x) 0.0)
+              "Vertices should span a non-zero x range"))))))
+
+(test glyph-to-mesh-convenience
+  "End-to-end glyph-to-mesh works"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((gid (%glyph-id-for-char font "H")))
+      (multiple-value-bind (vertices indices)
+          (rich-text:glyph-to-mesh font gid)
+        (is-true vertices "Vertices should not be NIL")
+        (is-true indices "Indices should not be NIL")
+        (is (> (length vertices) 0))
+        (is (> (length indices) 0))))))
+
+(test glyph-to-mesh-space-returns-nil
+  "glyph-to-mesh returns NIL for blank glyphs (space)"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((gid (%glyph-id-for-char font " ")))
+      (multiple-value-bind (vertices indices)
+          (rich-text:glyph-to-mesh font gid)
+        (is-false vertices "Vertices should be NIL for space")
+        (is-false indices "Indices should be NIL for space")))))

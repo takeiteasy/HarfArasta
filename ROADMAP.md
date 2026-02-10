@@ -12,7 +12,7 @@ Bind ~44 core HarfBuzz functions via CFFI:
 ## Phase 2: Glyph Outline Extraction [DONE]
 Wire HarfBuzz draw callbacks to `trivial-sdf:path-builder` to produce `shape` objects from glyph outlines.
 
-## Phase 3: Single Glyph Rendering
+## Phase 3: Single Glyph Rendering [DONE]
 - Bitmap rendering (regular, SDF, MSDF) via `trivial-signed-distance-fields`
 - Vertex mesh generation (CDT) via `trivial-delaunay-triangulation`
 
