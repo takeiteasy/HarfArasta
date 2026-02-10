@@ -228,3 +228,123 @@ Returns (VALUES vertices indices) — see SHAPE-TO-MESH for details."
   (let ((shape (glyph-to-shape font glyph-id)))
     (when shape
       (shape-to-mesh shape :segments-per-edge segments-per-edge))))
+
+;;;; ——— Phase 4: String shaping + rendering ———
+
+(defstruct shaped-glyph
+  "Per-glyph shaping output from HarfBuzz."
+  (glyph-id 0 :type fixnum)
+  (cluster 0 :type fixnum)
+  (x-advance 0 :type fixnum)
+  (y-advance 0 :type fixnum)
+  (x-offset 0 :type fixnum)
+  (y-offset 0 :type fixnum))
+
+(defun shape-text (font text &key direction script language)
+  "Shape TEXT using FONT via HarfBuzz. Returns a list of shaped-glyph structs.
+DIRECTION is a keyword (:ltr :rtl :ttb :btt) or NIL for auto-detection.
+SCRIPT is a 4-char tag string (e.g. \"Latn\") or NIL.
+LANGUAGE is a BCP-47 string (e.g. \"en\") or NIL.
+Unset properties are guessed by hb_buffer_guess_segment_properties."
+  (let ((buf (cl-rich-text/harfbuzz:hb-buffer-create)))
+    (unwind-protect
+         (progn
+           (cl-rich-text/harfbuzz:hb-buffer-add-utf8 buf text -1 0 -1)
+           (when direction
+             (cl-rich-text/harfbuzz:hb-buffer-set-direction buf direction))
+           (when script
+             (cl-rich-text/harfbuzz:hb-buffer-set-script
+              buf (cl-rich-text/harfbuzz:hb-script-from-tag script)))
+           (when language
+             (cl-rich-text/harfbuzz:hb-buffer-set-language
+              buf (cl-rich-text/harfbuzz:hb-language-from-string language -1)))
+           (cl-rich-text/harfbuzz:hb-buffer-guess-segment-properties buf)
+           (cl-rich-text/harfbuzz:hb-shape font buf (cffi:null-pointer) 0)
+           (cffi:with-foreign-object (len :uint)
+             (let ((infos (cl-rich-text/harfbuzz:hb-buffer-get-glyph-infos buf len))
+                   (count (cffi:mem-ref len :uint)))
+               (let ((positions (cl-rich-text/harfbuzz:hb-buffer-get-glyph-positions buf len)))
+                 (loop for i from 0 below count
+                       for info = (cffi:mem-aptr infos
+                                                 '(:struct cl-rich-text/harfbuzz:hb-glyph-info-t) i)
+                       for pos = (cffi:mem-aptr positions
+                                                '(:struct cl-rich-text/harfbuzz:hb-glyph-position-t) i)
+                       collect (make-shaped-glyph
+                                :glyph-id (cffi:foreign-slot-value
+                                           info '(:struct cl-rich-text/harfbuzz:hb-glyph-info-t)
+                                           'cl-rich-text/harfbuzz::codepoint)
+                                :cluster (cffi:foreign-slot-value
+                                          info '(:struct cl-rich-text/harfbuzz:hb-glyph-info-t)
+                                          'cl-rich-text/harfbuzz::cluster)
+                                :x-advance (cffi:foreign-slot-value
+                                            pos '(:struct cl-rich-text/harfbuzz:hb-glyph-position-t)
+                                            'cl-rich-text/harfbuzz::x-advance)
+                                :y-advance (cffi:foreign-slot-value
+                                            pos '(:struct cl-rich-text/harfbuzz:hb-glyph-position-t)
+                                            'cl-rich-text/harfbuzz::y-advance)
+                                :x-offset (cffi:foreign-slot-value
+                                           pos '(:struct cl-rich-text/harfbuzz:hb-glyph-position-t)
+                                           'cl-rich-text/harfbuzz::x-offset)
+                                :y-offset (cffi:foreign-slot-value
+                                           pos '(:struct cl-rich-text/harfbuzz:hb-glyph-position-t)
+                                           'cl-rich-text/harfbuzz::y-offset)))))))
+      (cl-rich-text/harfbuzz:hb-buffer-destroy buf))))
+
+(defun %map-shaped-glyphs (shaped-glyphs render-fn)
+  "Walk SHAPED-GLYPHS accumulating cursor position, calling RENDER-FN for each glyph.
+RENDER-FN receives (font-not-needed glyph-id) and should return render data or NIL.
+Returns a list of (pen-x pen-y . render-data) for non-NIL results."
+  (let ((cursor-x 0)
+        (cursor-y 0)
+        (results nil))
+    (dolist (sg shaped-glyphs)
+      (let ((pen-x (+ cursor-x (shaped-glyph-x-offset sg)))
+            (pen-y (+ cursor-y (shaped-glyph-y-offset sg))))
+        (let ((data (funcall render-fn (shaped-glyph-glyph-id sg))))
+          (when data
+            (push (list* pen-x pen-y data) results))))
+      (incf cursor-x (shaped-glyph-x-advance sg))
+      (incf cursor-y (shaped-glyph-y-advance sg)))
+    (nreverse results)))
+
+(defun text-to-meshes (font text &key direction script language (segments-per-edge 8))
+  "Shape TEXT and triangulate each visible glyph into a positioned mesh.
+Returns a list of (x y vertices indices). See SHAPE-TO-MESH for array formats."
+  (let ((glyphs (shape-text font text :direction direction
+                                       :script script :language language)))
+    (%map-shaped-glyphs
+     glyphs
+     (lambda (glyph-id)
+       (let ((shape (glyph-to-shape font glyph-id)))
+         (when shape
+           (multiple-value-bind (vertices indices)
+               (shape-to-mesh shape :segments-per-edge segments-per-edge)
+             (list vertices indices))))))))
+
+(defun text-to-sdfs (font text glyph-width glyph-height
+                     &key direction script language (range 4.0d0) (padding 2.0))
+  "Shape TEXT and render each visible glyph as a positioned SDF bitmap.
+Returns a list of (x y bitmap). See SHAPE-TO-SDF for bitmap format."
+  (let ((glyphs (shape-text font text :direction direction
+                                       :script script :language language)))
+    (%map-shaped-glyphs
+     glyphs
+     (lambda (glyph-id)
+       (let ((shape (glyph-to-shape font glyph-id)))
+         (when shape
+           (list (shape-to-sdf shape glyph-width glyph-height
+                               :range range :padding padding))))))))
+
+(defun text-to-msdfs (font text glyph-width glyph-height
+                      &key direction script language (range 4.0d0) (padding 2.0))
+  "Shape TEXT and render each visible glyph as a positioned MSDF bitmap.
+Returns a list of (x y bitmap). See SHAPE-TO-MSDF for bitmap format."
+  (let ((glyphs (shape-text font text :direction direction
+                                       :script script :language language)))
+    (%map-shaped-glyphs
+     glyphs
+     (lambda (glyph-id)
+       (let ((shape (glyph-to-shape font glyph-id)))
+         (when shape
+           (list (shape-to-msdf shape glyph-width glyph-height
+                                :range range :padding padding))))))))

@@ -16,8 +16,12 @@ Wire HarfBuzz draw callbacks to `trivial-sdf:path-builder` to produce `shape` ob
 - Bitmap rendering (regular, SDF, MSDF) via `trivial-signed-distance-fields`
 - Vertex mesh generation (CDT) via `trivial-delaunay-triangulation`
 
-## Phase 4: String Shaping + Rendering
+## Phase 4: String Shaping + Rendering [DONE]
 Use `hb_shape` to get positioned glyphs, then render each glyph with appropriate offsets.
+
+## Phase 4.5: Minor changes and improvements
+- Integrate `font-discovery` library to automatically find fonts on the system.
+- Add support for generating regular bitmap glyphs + strings.
 
 ## Phase 5: Glyph Cache
 Cache rendered glyphs keyed by `(glyph-id, font-size, render-mode)`.

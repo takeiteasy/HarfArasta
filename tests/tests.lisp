@@ -355,3 +355,132 @@
           (rich-text:glyph-to-mesh font gid)
         (is-false vertices "Vertices should be NIL for space")
         (is-false indices "Indices should be NIL for space")))))
+
+;;; ——— Phase 4: String shaping + rendering ———
+
+;; shape-text tests
+
+(test shape-text-hello
+  "shape-text on 'Hello' returns 5 shaped-glyphs with positive x-advances"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((glyphs (rich-text:shape-text font "Hello")))
+      (is (= (length glyphs) 5))
+      (dolist (g glyphs)
+        (is (> (rich-text:shaped-glyph-x-advance g) 0))))))
+
+(test shape-text-empty-string
+  "shape-text on empty string returns empty list"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((glyphs (rich-text:shape-text font "")))
+      (is (null glyphs)))))
+
+(test shape-text-single-char
+  "shape-text on 'A' returns 1 glyph matching %glyph-id-for-char"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((glyphs (rich-text:shape-text font "A"))
+          (expected-id (%glyph-id-for-char font "A")))
+      (is (= (length glyphs) 1))
+      (is (= (rich-text:shaped-glyph-glyph-id (first glyphs)) expected-id)))))
+
+(test shape-text-with-space
+  "shape-text on 'A B' returns 3 glyphs with correct glyph-ids"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((glyphs (rich-text:shape-text font "A B"))
+          (a-id (%glyph-id-for-char font "A"))
+          (space-id (%glyph-id-for-char font " "))
+          (b-id (%glyph-id-for-char font "B")))
+      (is (= (length glyphs) 3))
+      (is (= (rich-text:shaped-glyph-glyph-id (first glyphs)) a-id))
+      (is (= (rich-text:shaped-glyph-glyph-id (second glyphs)) space-id))
+      (is (= (rich-text:shaped-glyph-glyph-id (third glyphs)) b-id)))))
+
+(test shape-text-advance-sum
+  "Total x-advance sum is positive for non-empty text"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((glyphs (rich-text:shape-text font "Hello"))
+           (total (reduce #'+ glyphs :key #'rich-text:shaped-glyph-x-advance)))
+      (is (> total 0)))))
+
+(test shape-text-explicit-direction
+  "shape-text works with explicit :direction :ltr"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((glyphs (rich-text:shape-text font "Hello" :direction :ltr)))
+      (is (= (length glyphs) 5)))))
+
+(test shape-text-explicit-script-and-language
+  "shape-text works with explicit :script and :language"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((glyphs (rich-text:shape-text font "Hello"
+                                        :script "Latn" :language "en")))
+      (is (= (length glyphs) 5)))))
+
+(test shape-text-cluster-values
+  "Cluster values are non-decreasing for LTR Latin text"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((glyphs (rich-text:shape-text font "Hello" :direction :ltr)))
+      (loop for (a b) on glyphs
+            while b
+            do (is (<= (rich-text:shaped-glyph-cluster a)
+                       (rich-text:shaped-glyph-cluster b)))))))
+
+;; text-to-meshes tests
+
+(test text-to-meshes-basic
+  "text-to-meshes on 'Hi' returns 2 entries with valid vertex/index arrays"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((results (rich-text:text-to-meshes font "Hi")))
+      (is (= (length results) 2))
+      (dolist (entry results)
+        (let ((vertices (third entry))
+              (indices (fourth entry)))
+          (is (typep vertices '(simple-array single-float (*))))
+          (is (typep indices '(simple-array (unsigned-byte 32) (*))))
+          (is (> (length vertices) 0))
+          (is (> (length indices) 0)))))))
+
+(test text-to-meshes-positions-advance
+  "Second glyph x position > 0 in text-to-meshes"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((results (rich-text:text-to-meshes font "Hi")))
+      (is (= (first (first results)) 0) "First glyph x should be 0")
+      (is (> (first (second results)) 0) "Second glyph x should be > 0"))))
+
+(test text-to-meshes-skips-spaces
+  "text-to-meshes on 'A B' returns 2 entries, B positioned after A+space"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((results (rich-text:text-to-meshes font "A B")))
+      (is (= (length results) 2) "Should have 2 entries (space skipped)")
+      (is (> (first (second results)) (first (first results)))
+          "B should be positioned after A"))))
+
+;; text-to-sdfs tests
+
+(test text-to-sdfs-basic
+  "text-to-sdfs on 'AB' returns 2 entries with 32x32 1-channel bitmaps"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((results (rich-text:text-to-sdfs font "AB" 32 32)))
+      (is (= (length results) 2))
+      (dolist (entry results)
+        (let ((bmp (third entry)))
+          (is-true bmp)
+          (is (= (trivial-sdf:bitmap-width bmp) 32))
+          (is (= (trivial-sdf:bitmap-height bmp) 32))
+          (is (= (trivial-sdf:bitmap-channels bmp) 1)))))))
+
+(test text-to-sdfs-skips-spaces
+  "text-to-sdfs on 'A B' returns 2 entries (space skipped)"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((results (rich-text:text-to-sdfs font "A B" 32 32)))
+      (is (= (length results) 2)))))
+
+;; text-to-msdfs tests
+
+(test text-to-msdfs-basic
+  "text-to-msdfs on 'AB' returns 2 entries with 3-channel bitmaps"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((results (rich-text:text-to-msdfs font "AB" 32 32)))
+      (is (= (length results) 2))
+      (dolist (entry results)
+        (let ((bmp (third entry)))
+          (is-true bmp)
+          (is (= (trivial-sdf:bitmap-channels bmp) 3)))))))
