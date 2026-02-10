@@ -1,0 +1,11 @@
+*.fasl
+*.lx64fsl
+*.dx64fsl
+*.wx64fsl
+*.lx32fsl
+*.dx32fsl
+*.abcl
+*.fas
+*.lib
+harfbuzz/
+icu/
