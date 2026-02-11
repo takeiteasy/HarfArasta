@@ -16,11 +16,6 @@ COLOR is an (r g b) list with values 0-255."
          ;; Scale: font units → pixels, with pixel-height = upem
          (scale (/ (coerce pixel-height 'double-float)
                    (coerce upem 'double-float)))
-         ;; Total advance in font units, convert to pixels
-         (total-advance (loop for g in glyphs
-                              sum (rich-text:shaped-glyph-x-advance g)))
-         (canvas-width (max 1 (ceiling (* total-advance scale))))
-         (canvas-height pixel-height)
          ;; Collect per-glyph shapes and positions
          (glyph-data
            (let ((cursor-x 0))
@@ -30,7 +25,34 @@ COLOR is an (r g b) list with values 0-255."
                    for shape = (rich-text:glyph-to-shape font gid)
                    do (incf cursor-x (rich-text:shaped-glyph-x-advance sg))
                    when shape
-                     collect (list pen-x shape)))))
+                     collect (list pen-x shape))))
+         ;; Compute visual bounding box from actual glyph shapes
+         (padding 1.0)
+         (advance-width (ceiling (* (loop for g in glyphs
+                                          sum (rich-text:shaped-glyph-x-advance g))
+                                    scale)))
+         (bounds (let ((vmin-x 0)
+                       (vmax-x advance-width)
+                       (vmin-y 0)
+                       (vmax-y pixel-height))
+                   (dolist (entry glyph-data (list vmin-x vmax-x vmin-y vmax-y))
+                     (let* ((pen-x-fu (first entry))
+                            (shape (second entry))
+                            (pen-x-px (round (* pen-x-fu scale))))
+                       (multiple-value-bind (min-x min-y max-x max-y)
+                           (trivial-sdf:shape-bounds shape)
+                         (setf vmin-x (min vmin-x (+ pen-x-px (floor (* min-x scale))
+                                                     (- (ceiling padding))))
+                               vmax-x (max vmax-x (+ pen-x-px (ceiling (* max-x scale))
+                                                     (ceiling padding)))
+                               vmin-y (min vmin-y (+ (floor (* min-y scale))
+                                                     (- (ceiling padding))))
+                               vmax-y (max vmax-y (+ (ceiling (* max-y scale))
+                                                     (ceiling padding)))))))))
+         (x-offset (if (< (first bounds) 0) (- (first bounds)) 0))
+         (y-offset (if (< (third bounds) 0) (- (third bounds)) 0))
+         (canvas-width (max 1 (+ (second bounds) x-offset)))
+         (canvas-height (max 1 (+ (fourth bounds) y-offset))))
     ;; Render each glyph's SDF in the shared coordinate system, then composite
     (let* ((png (make-instance 'zpng:png
                                :width canvas-width
@@ -43,14 +65,14 @@ COLOR is an (r g b) list with values 0-255."
       (dolist (entry glyph-data)
         (let* ((pen-x-fu (first entry))   ; font units
                (shape (second entry))
-               (pen-x-px (round (* pen-x-fu scale))))
+               (pen-x-px (+ (round (* pen-x-fu scale)) x-offset)))
           ;; Get shape bounds in font units
           (multiple-value-bind (min-x min-y max-x max-y)
               (trivial-sdf:shape-bounds shape)
-            (let* ((padding 1.0)
+            (let* (
                    ;; Glyph bounding box in pixels
                    (gx0 (+ pen-x-px (floor (* min-x scale)) (- (ceiling padding))))
-                   (gy0 (max 0 (+ (floor (* min-y scale)) (- (ceiling padding)))))
+                   (gy0 (+ (floor (* min-y scale)) (- (ceiling padding))))
                    (gx1 (min canvas-width
                              (+ pen-x-px (ceiling (* max-x scale)) (ceiling padding))))
                    (gy1 (min canvas-height
@@ -64,7 +86,7 @@ COLOR is an (r g b) list with values 0-255."
                    ;; So sdf_scale = scale, translate_x = gx0 - pen_x_fu * scale
                    (sdf-scale scale)
                    (sdf-tx (coerce (- gx0 (* pen-x-fu scale)) 'double-float))
-                   (sdf-ty (coerce (- gy0) 'double-float))
+                   (sdf-ty (coerce gy0 'double-float))
                    ;; SDF range in font units: ~2 pixels worth of distance
                    (sdf-range (/ 2.0d0 sdf-scale)))
               (when (and (> gw 0) (> gh 0)
@@ -76,10 +98,10 @@ COLOR is an (r g b) list with values 0-255."
                              :translate-x sdf-tx :translate-y sdf-ty))
                        (sdf-data (trivial-sdf:bitmap-data sdf))
                        ;; Smoothstep width: ~1px of anti-aliasing in SDF space
-                       (edge-w (/ 1.0 (max 1.0 (coerce (min gw gh) 'single-float)))))
+                       (edge-w (coerce (/ 0.5d0 (* sdf-scale sdf-range)) 'single-float)))
                   ;; Composite SDF-thresholded pixels onto canvas
                   (loop for sy from 0 below gh
-                        for cy = (- canvas-height 1 (+ gy0 sy)) ; flip Y for PNG (top-down)
+                        for cy = (- canvas-height 1 (+ gy0 y-offset sy)) ; flip Y for PNG (top-down)
                         when (and (>= cy 0) (< cy canvas-height))
                           do (loop for sx from 0 below gw
                                    for cx = (+ gx0 sx)
