@@ -1,6 +1,6 @@
 ;;;; src/harfbuzz/package.lisp
 
-(defpackage #:cl-rich-text/harfbuzz
+(defpackage #:harfarasta/harfbuzz
   (:use #:cl #:cffi)
   (:export
    ;; Opaque types

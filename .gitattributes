@@ -1,2 +1,2 @@
-harfbuzz/* linguist-vendored
-icu/* linguist-vendored
+harfbuzz/** linguist-vendored
+icu/** linguist-vendored

@@ -1,7 +1,7 @@
 ;;;; src/export/export.lisp
-;;;; PNG and OBJ export for cl-rich-text
+;;;; PNG and OBJ export for harfarasta
 
-(in-package #:cl-rich-text/export)
+(in-package #:harfarasta/export)
 
 ;;; --- PNG export ---
 
@@ -11,7 +11,7 @@ PIXEL-HEIGHT is the height of the output image in pixels.
 COLOR is an (r g b) list with values 0-255."
   (let* ((glyphs (rich-text:shape-text font text))
          (upem (cffi:with-foreign-objects ((x :int) (y :int))
-                 (cl-rich-text/harfbuzz:hb-font-get-scale font x y)
+                 (harfarasta/harfbuzz:hb-font-get-scale font x y)
                  (cffi:mem-ref x :int)))
          ;; Scale: font units → pixels, with pixel-height = upem
          (scale (/ (coerce pixel-height 'double-float)
@@ -116,7 +116,7 @@ COLOR is an (r g b) list with values 0-255."
 SIZE is the scale factor applied to font-unit coordinates."
   (let* ((meshes (rich-text:text-to-meshes font text))
          (upem (cffi:with-foreign-objects ((x :int) (y :int))
-                 (cl-rich-text/harfbuzz:hb-font-get-scale font x y)
+                 (harfarasta/harfbuzz:hb-font-get-scale font x y)
                  (cffi:mem-ref x :int)))
          (scale (/ (coerce size 'single-float)
                    (coerce upem 'single-float)))
@@ -124,7 +124,7 @@ SIZE is the scale factor applied to font-unit coordinates."
     (with-open-file (out file :direction :output
                               :if-exists :supersede
                               :if-does-not-exist :create)
-      (format out "# Wavefront OBJ exported by cl-rich-text/export~%")
+      (format out "# Wavefront OBJ exported by harfarasta/export~%")
       (format out "# Text: ~A~%~%" text)
       (loop for entry in meshes
             for glyph-idx from 0
@@ -169,7 +169,7 @@ COLOR is an (R G B) list (0-255) used for PNG output."
 
 ;;; --- Test/demo function ---
 
-(defun render-tests (&key (output-dir (asdf:system-relative-pathname :cl-rich-text "export-tests/"))
+(defun render-tests (&key (output-dir (asdf:system-relative-pathname :harfarasta "export-tests/"))
                           font-path)
   "Run a suite of export tests, writing results to OUTPUT-DIR.
 Uses FONT-PATH if given, otherwise discovers Arial."
@@ -178,9 +178,18 @@ Uses FONT-PATH if given, otherwise discovers Arial."
                   (rich-text:find-font-path :family "Arial"))))
     (flet ((out (name)
              (merge-pathnames name output-dir)))
-      (format t "~%=== cl-rich-text/export render tests ===~%")
+      (format t "~%=== harfarasta/export render tests ===~%")
       (format t "Font: ~A~%" path)
       (format t "Output: ~A~%~%" output-dir)
+
+      ;; OBJ tests
+      (format t "5. OBJ: 'Hi' mesh, size 1.0~%")
+      (render-string "Hi" (out "hi.obj")
+                     :as :obj :font-path path :size 1.0)
+
+      (format t "6. OBJ: 'ABC' mesh, size 0.5~%")
+      (render-string "ABC" (out "abc.obj")
+                     :as :obj :font-path path :size 0.5)
 
       ;; PNG tests
       (format t "1. PNG: 'Hello' white on transparent, 64px~%")
@@ -198,18 +207,9 @@ Uses FONT-PATH if given, otherwise discovers Arial."
                      :as :png :font-path path :size 48
                      :color '(0 200 0))
 
-      (format t "4. PNG: 'cl-rich-text' blue, 96px~%")
-      (render-string "cl-rich-text" (out "cl-rich-text-blue-96.png")
+      (format t "4. PNG: 'harfarasta' blue, 96px~%")
+      (render-string "harfarasta" (out "harfarasta-blue-96.png")
                      :as :png :font-path path :size 96
                      :color '(80 140 255))
-
-      ;; OBJ tests
-      (format t "5. OBJ: 'Hello' mesh, size 1.0~%")
-      (render-string "Hello" (out "hello.obj")
-                     :as :obj :font-path path :size 1.0)
-
-      (format t "6. OBJ: 'ABC' mesh, size 0.5~%")
-      (render-string "ABC" (out "abc.obj")
-                     :as :obj :font-path path :size 0.5)
 
       (format t "~%Done. ~D files written to ~A~%" 6 output-dir))))

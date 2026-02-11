@@ -1,8 +1,6 @@
-# cl-rich-text
+# HarfArasta 
 
-Platform/backend-agnostic text rendering and shaping library for Common Lisp.
-
-Shapes text with [HarfBuzz](https://harfbuzz.github.io/) and renders glyphs as SDF, MSDF, anti-aliased bitmap, or triangulated mesh -- suitable for GPU text rendering, game engines, UI toolkits, or offline export.
+HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shaping library for Common Lisp that uses [HarfBuzz](https://harfbuzz.github.io/) for text shaping. After shaping, it renders glyphs as SDF, MSDF, anti-aliased bitmap, or triangulated mesh -- suitable for GPU text rendering, game engines, UI toolkits, or offline export.
 
 ## Features
 
@@ -14,13 +12,13 @@ Shapes text with [HarfBuzz](https://harfbuzz.github.io/) and renders glyphs as S
 - **Bitmap rendering** -- anti-aliased grayscale coverage bitmaps via SDF thresholding
 - **Mesh generation** -- constrained Delaunay triangulation of glyph outlines
 - **String rendering** -- shape a string and render all visible glyphs with correct positioning
-- **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `cl-rich-text/export`)
+- **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `harfarasta/export`)
 
 ## Quickstart
 
 ```lisp
 ;; Load the library
-(ql:quickload :cl-rich-text)
+(ql:quickload :harfarasta)
 
 ;; Open a font by path
 (rich-text:with-font (font "/path/to/font.ttf")
@@ -67,23 +65,23 @@ mkdir -p build && cd build && cmake .. && make
 ### Loading
 
 ```lisp
-(ql:quickload :cl-rich-text)
+(ql:quickload :harfarasta)
 ```
 
 ### Running tests
 
 ```lisp
-(asdf:test-system :cl-rich-text)
+(asdf:test-system :harfarasta)
 ```
 
 ## Systems
 
 | System | Description |
 |--------|-------------|
-| `cl-rich-text` | Core library (shaping, SDF/MSDF/bitmap/mesh rendering, font discovery) |
-| `cl-rich-text/harfbuzz` | Internal CFFI bindings to HarfBuzz (not part of public API) |
-| `cl-rich-text/export` | PNG and OBJ export utilities |
-| `cl-rich-text/tests` | Test suite (fiveam) |
+| `harfarasta` | Core library (shaping, SDF/MSDF/bitmap/mesh rendering, font discovery) |
+| `harfarasta/harfbuzz` | Internal CFFI bindings to HarfBuzz (not part of public API) |
+| `harfarasta/export` | PNG and OBJ export utilities |
+| `harfarasta/tests` | Test suite (fiveam) |
 
 ## Dependencies
 
@@ -92,15 +90,15 @@ mkdir -p build && cd build && cmake .. && make
 - [trivial-delaunay-triangulation](https://github.com/takeiteasy/trivial-delaunay-triangulation) -- CDT mesh generation
 - [font-discovery](https://shinmera.com/project/font-discovery) -- system font lookup
 - [harfbuzz](https://harfbuzz.github.io/) -- text shaping engine (C shared library, built via CMake)
-- [zpng](https://www.xach.com/lisp/zpng/) -- PNG export (`cl-rich-text/export` only)
-- [fiveam](https://github.com/lispci/fiveam) -- testing (`cl-rich-text/tests` only)
+- [zpng](https://www.xach.com/lisp/zpng/) -- PNG export (`harfarasta/export` only)
+- [fiveam](https://github.com/lispci/fiveam) -- testing (`harfarasta/tests` only)
 
 ## Export Package
 
-`cl-rich-text/export` provides a simple interface to render strings directly to PNG images or Wavefront OBJ mesh files.
+`harfarasta/export` provides a simple interface to render strings directly to PNG images or Wavefront OBJ mesh files.
 
 ```lisp
-(ql:quickload :cl-rich-text/export)
+(ql:quickload :harfarasta/export)
 
 ;; Render to PNG (anti-aliased, transparent background)
 (rich-text/export:render-string "Hello" #p"hello.png"

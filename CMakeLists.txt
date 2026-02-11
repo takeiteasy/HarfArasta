@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 cmake_minimum_required(VERSION 3.5)
-project(cl-rich-text CXX)
+project(harfarasta CXX)
 
 option(HARFBUZZ_BUILD_ICU "Enable building of ICU" OFF)
 if (APPLE)

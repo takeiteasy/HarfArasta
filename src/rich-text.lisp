@@ -2,11 +2,11 @@
 ;;;; Phase 2: Glyph outline extraction
 ;;;; Phase 3: Single glyph rendering (SDF/MSDF/mesh)
 
-(in-package #:cl-rich-text)
+(in-package #:harfarasta)
 
 (defun make-path-builder-draw-sink (builder)
   "Create a draw-sink that forwards HarfBuzz draw events to a trivial-sdf path-builder."
-  (cl-rich-text/harfbuzz:make-draw-sink
+  (harfarasta/harfbuzz:make-draw-sink
    :move-to (lambda (x y)
               (trivial-sdf:path-move-to builder x y))
    :line-to (lambda (x y)
@@ -23,18 +23,18 @@
 FONT is an hb_font_t pointer. GLYPH-ID is the glyph codepoint (uint32)."
   (let* ((builder (trivial-sdf:make-path-builder))
          (sink (make-path-builder-draw-sink builder))
-         (sink-id (cl-rich-text/harfbuzz:register-draw-data sink))
-         (dfuncs (cl-rich-text/harfbuzz:make-hb-draw-funcs)))
+         (sink-id (harfarasta/harfbuzz:register-draw-data sink))
+         (dfuncs (harfarasta/harfbuzz:make-hb-draw-funcs)))
     (unwind-protect
          (progn
-           (cl-rich-text/harfbuzz:hb-font-draw-glyph
+           (harfarasta/harfbuzz:hb-font-draw-glyph
             font glyph-id dfuncs (cffi:make-pointer sink-id))
            (let ((shape (trivial-sdf:path-to-shape builder)))
              (if (null (trivial-sdf:shape-contours shape))
                  nil
                  shape)))
-      (cl-rich-text/harfbuzz:hb-draw-funcs-destroy dfuncs)
-      (cl-rich-text/harfbuzz:unregister-draw-data sink-id))))
+      (harfarasta/harfbuzz:hb-draw-funcs-destroy dfuncs)
+      (harfarasta/harfbuzz:unregister-draw-data sink-id))))
 
 (defmacro %with-font-from-path ((font-var path index) &body body)
   "Internal: Load a font from PATH with face INDEX and bind to FONT-VAR.
@@ -42,17 +42,17 @@ Manages blob, face, and font lifecycle. Sets scale to face upem."
   (let ((blob-var (gensym "BLOB"))
         (face-var (gensym "FACE"))
         (upem-var (gensym "UPEM")))
-    `(let* ((,blob-var (cl-rich-text/harfbuzz:hb-blob-create-from-file
+    `(let* ((,blob-var (harfarasta/harfbuzz:hb-blob-create-from-file
                         (namestring ,path)))
-            (,face-var (cl-rich-text/harfbuzz:hb-face-create ,blob-var ,index))
-            (,font-var (cl-rich-text/harfbuzz:hb-font-create ,face-var))
-            (,upem-var (cl-rich-text/harfbuzz:hb-face-get-upem ,face-var)))
-       (cl-rich-text/harfbuzz:hb-font-set-scale ,font-var ,upem-var ,upem-var)
+            (,face-var (harfarasta/harfbuzz:hb-face-create ,blob-var ,index))
+            (,font-var (harfarasta/harfbuzz:hb-font-create ,face-var))
+            (,upem-var (harfarasta/harfbuzz:hb-face-get-upem ,face-var)))
+       (harfarasta/harfbuzz:hb-font-set-scale ,font-var ,upem-var ,upem-var)
        (unwind-protect
             (progn ,@body)
-         (cl-rich-text/harfbuzz:hb-font-destroy ,font-var)
-         (cl-rich-text/harfbuzz:hb-face-destroy ,face-var)
-         (cl-rich-text/harfbuzz:hb-blob-destroy ,blob-var)))))
+         (harfarasta/harfbuzz:hb-font-destroy ,font-var)
+         (harfarasta/harfbuzz:hb-face-destroy ,face-var)
+         (harfarasta/harfbuzz:hb-blob-destroy ,blob-var)))))
 
 (defmacro with-font ((font-var first-arg &rest args) &body body)
   "Load a font and bind it to FONT-VAR for the duration of BODY.
@@ -276,49 +276,49 @@ DIRECTION is a keyword (:ltr :rtl :ttb :btt) or NIL for auto-detection.
 SCRIPT is a 4-char tag string (e.g. \"Latn\") or NIL.
 LANGUAGE is a BCP-47 string (e.g. \"en\") or NIL.
 Unset properties are guessed by hb_buffer_guess_segment_properties."
-  (let ((buf (cl-rich-text/harfbuzz:hb-buffer-create)))
+  (let ((buf (harfarasta/harfbuzz:hb-buffer-create)))
     (unwind-protect
          (progn
-           (cl-rich-text/harfbuzz:hb-buffer-add-utf8 buf text -1 0 -1)
+           (harfarasta/harfbuzz:hb-buffer-add-utf8 buf text -1 0 -1)
            (when direction
-             (cl-rich-text/harfbuzz:hb-buffer-set-direction buf direction))
+             (harfarasta/harfbuzz:hb-buffer-set-direction buf direction))
            (when script
-             (cl-rich-text/harfbuzz:hb-buffer-set-script
-              buf (cl-rich-text/harfbuzz:hb-script-from-tag script)))
+             (harfarasta/harfbuzz:hb-buffer-set-script
+              buf (harfarasta/harfbuzz:hb-script-from-tag script)))
            (when language
-             (cl-rich-text/harfbuzz:hb-buffer-set-language
-              buf (cl-rich-text/harfbuzz:hb-language-from-string language -1)))
-           (cl-rich-text/harfbuzz:hb-buffer-guess-segment-properties buf)
-           (cl-rich-text/harfbuzz:hb-shape font buf (cffi:null-pointer) 0)
+             (harfarasta/harfbuzz:hb-buffer-set-language
+              buf (harfarasta/harfbuzz:hb-language-from-string language -1)))
+           (harfarasta/harfbuzz:hb-buffer-guess-segment-properties buf)
+           (harfarasta/harfbuzz:hb-shape font buf (cffi:null-pointer) 0)
            (cffi:with-foreign-object (len :uint)
-             (let ((infos (cl-rich-text/harfbuzz:hb-buffer-get-glyph-infos buf len))
+             (let ((infos (harfarasta/harfbuzz:hb-buffer-get-glyph-infos buf len))
                    (count (cffi:mem-ref len :uint)))
-               (let ((positions (cl-rich-text/harfbuzz:hb-buffer-get-glyph-positions buf len)))
+               (let ((positions (harfarasta/harfbuzz:hb-buffer-get-glyph-positions buf len)))
                  (loop for i from 0 below count
                        for info = (cffi:mem-aptr infos
-                                                 '(:struct cl-rich-text/harfbuzz:hb-glyph-info-t) i)
+                                                 '(:struct harfarasta/harfbuzz:hb-glyph-info-t) i)
                        for pos = (cffi:mem-aptr positions
-                                                '(:struct cl-rich-text/harfbuzz:hb-glyph-position-t) i)
+                                                '(:struct harfarasta/harfbuzz:hb-glyph-position-t) i)
                        collect (make-shaped-glyph
                                 :glyph-id (cffi:foreign-slot-value
-                                           info '(:struct cl-rich-text/harfbuzz:hb-glyph-info-t)
-                                           'cl-rich-text/harfbuzz::codepoint)
+                                           info '(:struct harfarasta/harfbuzz:hb-glyph-info-t)
+                                           'harfarasta/harfbuzz::codepoint)
                                 :cluster (cffi:foreign-slot-value
-                                          info '(:struct cl-rich-text/harfbuzz:hb-glyph-info-t)
-                                          'cl-rich-text/harfbuzz::cluster)
+                                          info '(:struct harfarasta/harfbuzz:hb-glyph-info-t)
+                                          'harfarasta/harfbuzz::cluster)
                                 :x-advance (cffi:foreign-slot-value
-                                            pos '(:struct cl-rich-text/harfbuzz:hb-glyph-position-t)
-                                            'cl-rich-text/harfbuzz::x-advance)
+                                            pos '(:struct harfarasta/harfbuzz:hb-glyph-position-t)
+                                            'harfarasta/harfbuzz::x-advance)
                                 :y-advance (cffi:foreign-slot-value
-                                            pos '(:struct cl-rich-text/harfbuzz:hb-glyph-position-t)
-                                            'cl-rich-text/harfbuzz::y-advance)
+                                            pos '(:struct harfarasta/harfbuzz:hb-glyph-position-t)
+                                            'harfarasta/harfbuzz::y-advance)
                                 :x-offset (cffi:foreign-slot-value
-                                           pos '(:struct cl-rich-text/harfbuzz:hb-glyph-position-t)
-                                           'cl-rich-text/harfbuzz::x-offset)
+                                           pos '(:struct harfarasta/harfbuzz:hb-glyph-position-t)
+                                           'harfarasta/harfbuzz::x-offset)
                                 :y-offset (cffi:foreign-slot-value
-                                           pos '(:struct cl-rich-text/harfbuzz:hb-glyph-position-t)
-                                           'cl-rich-text/harfbuzz::y-offset)))))))
-      (cl-rich-text/harfbuzz:hb-buffer-destroy buf))))
+                                           pos '(:struct harfarasta/harfbuzz:hb-glyph-position-t)
+                                           'harfarasta/harfbuzz::y-offset)))))))
+      (harfarasta/harfbuzz:hb-buffer-destroy buf))))
 
 (defun %map-shaped-glyphs (shaped-glyphs render-fn)
   "Walk SHAPED-GLYPHS accumulating cursor position, calling RENDER-FN for each glyph.

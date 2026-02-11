@@ -1,6 +1,6 @@
 ;;;; src/export/package.lisp
 
-(defpackage #:cl-rich-text/export
+(defpackage #:harfarasta/export
   (:nicknames #:rich-text/export)
   (:use #:cl)
   (:export

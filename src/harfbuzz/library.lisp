@@ -1,8 +1,8 @@
 ;;;; src/harfbuzz/library.lisp
 
-(in-package #:cl-rich-text/harfbuzz)
+(in-package #:harfarasta/harfbuzz)
 
-(pushnew (asdf:system-relative-pathname :cl-rich-text/harfbuzz "build/")
+(pushnew (asdf:system-relative-pathname :harfarasta/harfbuzz "build/")
          cffi:*foreign-library-directories*
          :test #'equal)
 

@@ -1,7 +1,7 @@
 ;;;; src/harfbuzz/bindings.lisp
 ;;;; CFFI bindings to HarfBuzz
 
-(in-package #:cl-rich-text/harfbuzz)
+(in-package #:harfarasta/harfbuzz)
 
 ;;; ——— Helper: HB_TAG encoding ———
 
