@@ -19,12 +19,24 @@
   :version "0.1.0"
   :depends-on (#:cl-rich-text/harfbuzz
                #:trivial-signed-distance-fields
-               #:trivial-delaunay-triangulation)
+               #:trivial-delaunay-triangulation
+               #:font-discovery)
   :serial t
   :components ((:module "src"
                 :components ((:file "package")
                              (:file "rich-text"))))
   :in-order-to ((test-op (test-op #:cl-rich-text/tests))))
+
+(asdf:defsystem #:cl-rich-text/export
+  :description "PNG and OBJ export utilities for cl-rich-text"
+  :author "George Watson <gigolo@hotmail.co.uk>"
+  :license "GPLv3"
+  :version "0.1.0"
+  :depends-on (#:cl-rich-text #:zpng)
+  :serial t
+  :components ((:module "src/export"
+                :components ((:file "package")
+                             (:file "export")))))
 
 (asdf:defsystem #:cl-rich-text/tests
   :description "Tests for cl-rich-text"

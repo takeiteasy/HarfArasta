@@ -2,7 +2,8 @@
 
 (defpackage #:cl-rich-text/tests
   (:use #:cl #:fiveam)
-  (:export #:cl-rich-text-suite))
+  (:export #:cl-rich-text-suite)
+  (:import-from #:org.shirakumo.font-discovery))
 
 (in-package #:cl-rich-text/tests)
 
@@ -484,3 +485,120 @@
         (let ((bmp (third entry)))
           (is-true bmp)
           (is (= (trivial-sdf:bitmap-channels bmp) 3)))))))
+
+;;; ——— Phase 4.5: Font discovery + bitmap rendering ———
+
+;; Font discovery tests
+
+(test find-font-path-basic
+  "find-font-path finds a known system font and returns an existing pathname"
+  (let ((path (rich-text:find-font-path :family "Arial")))
+    (is-true path "Should find a font")
+    (is (pathnamep path) "Should return a pathname")
+    (is-true (probe-file path) "Font file should exist")))
+
+(test find-font-path-error-on-missing
+  "find-font-path signals an error for a nonexistent font family"
+  (signals error
+    (rich-text:find-font-path :family "NonexistentFontFamilyXYZ99999")))
+
+(test with-font-discovery
+  "with-font with :family keyword produces a valid font via discovery"
+  (rich-text:with-font (font :family "Arial")
+    (is-true (not (cffi:null-pointer-p font))
+             "Font should not be a null pointer")
+    (cffi:with-foreign-objects ((x :int) (y :int))
+      (cl-rich-text/harfbuzz:hb-font-get-scale font x y)
+      (is (> (cffi:mem-ref x :int) 0)
+          "Scale should be positive"))))
+
+(test with-font-path-backward-compat
+  "with-font with path argument still works (backward compatibility)"
+  (rich-text:with-font (font *test-font-path*)
+    (is-true (not (cffi:null-pointer-p font))
+             "Font should not be a null pointer")
+    (cffi:with-foreign-objects ((x :int) (y :int))
+      (cl-rich-text/harfbuzz:hb-font-get-scale font x y)
+      (is (= (cffi:mem-ref x :int) 2048)
+          "Scale should be set to upem (2048)"))))
+
+;; Bitmap rendering tests
+
+(test shape-to-bitmap-basic
+  "shape-to-bitmap returns a 1-channel bitmap with correct dimensions"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "A"))
+           (shape (rich-text:glyph-to-shape font gid))
+           (bmp (rich-text:shape-to-bitmap shape 64 64)))
+      (is-true bmp "Bitmap should not be NIL")
+      (is (= (trivial-sdf:bitmap-width bmp) 64))
+      (is (= (trivial-sdf:bitmap-height bmp) 64))
+      (is (= (trivial-sdf:bitmap-channels bmp) 1)))))
+
+(test shape-to-bitmap-content
+  "Bitmap has both fully-inside (>0.9) and fully-outside (<0.1) pixels"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "A"))
+           (shape (rich-text:glyph-to-shape font gid))
+           (bmp (rich-text:shape-to-bitmap shape 64 64))
+           (data (trivial-sdf:bitmap-data bmp))
+           (has-inside nil)
+           (has-outside nil))
+      (loop for i from 0 below (length data)
+            for v = (aref data i)
+            do (when (> v 0.9) (setf has-inside t))
+               (when (< v 0.1) (setf has-outside t)))
+      (is-true has-inside "Bitmap should have fully-inside pixels (> 0.9)")
+      (is-true has-outside "Bitmap should have fully-outside pixels (< 0.1)"))))
+
+(test shape-to-bitmap-values-clamped
+  "All bitmap values are in [0.0, 1.0]"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "A"))
+           (shape (rich-text:glyph-to-shape font gid))
+           (bmp (rich-text:shape-to-bitmap shape 64 64))
+           (data (trivial-sdf:bitmap-data bmp)))
+      (loop for i from 0 below (length data)
+            for v = (aref data i)
+            do (is (<= 0.0 v 1.0)
+                   (format nil "Pixel ~A value ~F should be in [0,1]" i v))))))
+
+(test glyph-to-bitmap-convenience
+  "End-to-end glyph-to-bitmap works"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font "H"))
+           (bmp (rich-text:glyph-to-bitmap font gid 32 32)))
+      (is-true bmp "glyph-to-bitmap should return a bitmap")
+      (is (= (trivial-sdf:bitmap-channels bmp) 1)))))
+
+(test glyph-to-bitmap-space-returns-nil
+  "glyph-to-bitmap returns NIL for blank glyphs (space)"
+  (rich-text:with-font (font *test-font-path*)
+    (let* ((gid (%glyph-id-for-char font " "))
+           (bmp (rich-text:glyph-to-bitmap font gid 32 32)))
+      (is-false bmp "glyph-to-bitmap should return NIL for space"))))
+
+(test text-to-bitmaps-basic
+  "text-to-bitmaps on 'AB' returns 2 entries with correct bitmap dimensions"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((results (rich-text:text-to-bitmaps font "AB" 32 32)))
+      (is (= (length results) 2))
+      (dolist (entry results)
+        (let ((bmp (third entry)))
+          (is-true bmp)
+          (is (= (trivial-sdf:bitmap-width bmp) 32))
+          (is (= (trivial-sdf:bitmap-height bmp) 32))
+          (is (= (trivial-sdf:bitmap-channels bmp) 1)))))))
+
+(test text-to-bitmaps-skips-spaces
+  "text-to-bitmaps on 'A B' returns 2 entries (space skipped)"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((results (rich-text:text-to-bitmaps font "A B" 32 32)))
+      (is (= (length results) 2)))))
+
+(test text-to-bitmaps-positions-advance
+  "Second glyph x > 0 in text-to-bitmaps"
+  (rich-text:with-font (font *test-font-path*)
+    (let ((results (rich-text:text-to-bitmaps font "AB" 32 32)))
+      (is (= (first (first results)) 0) "First glyph x should be 0")
+      (is (> (first (second results)) 0) "Second glyph x should be > 0"))))

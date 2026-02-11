@@ -36,8 +36,8 @@ FONT is an hb_font_t pointer. GLYPH-ID is the glyph codepoint (uint32)."
       (cl-rich-text/harfbuzz:hb-draw-funcs-destroy dfuncs)
       (cl-rich-text/harfbuzz:unregister-draw-data sink-id))))
 
-(defmacro with-font ((font-var path &key (index 0)) &body body)
-  "Load a font from PATH and bind it to FONT-VAR for the duration of BODY.
+(defmacro %with-font-from-path ((font-var path index) &body body)
+  "Internal: Load a font from PATH with face INDEX and bind to FONT-VAR.
 Manages blob, face, and font lifecycle. Sets scale to face upem."
   (let ((blob-var (gensym "BLOB"))
         (face-var (gensym "FACE"))
@@ -53,6 +53,36 @@ Manages blob, face, and font lifecycle. Sets scale to face upem."
          (cl-rich-text/harfbuzz:hb-font-destroy ,font-var)
          (cl-rich-text/harfbuzz:hb-face-destroy ,face-var)
          (cl-rich-text/harfbuzz:hb-blob-destroy ,blob-var)))))
+
+(defmacro with-font ((font-var first-arg &rest args) &body body)
+  "Load a font and bind it to FONT-VAR for the duration of BODY.
+Manages blob, face, and font lifecycle. Sets scale to face upem.
+
+Two calling conventions:
+  (with-font (f \"/path/to/font.ttf\") ...)           ; path mode
+  (with-font (f \"/path/to/font.ttf\" :index 1) ...)  ; path mode with index
+  (with-font (f :family \"Helvetica\") ...)            ; discovery mode
+  (with-font (f :family \"Roboto\" :weight :bold) ...) ; discovery mode"
+  (if (keywordp first-arg)
+      ;; Discovery mode: all args are a font-discovery plist
+      (let ((path-var (gensym "PATH")))
+        `(let ((,path-var (find-font-path ,first-arg ,@args)))
+           (%with-font-from-path (,font-var ,path-var 0) ,@body)))
+      ;; Path mode: first-arg is the path, remaining args are &key index
+      (let ((index (or (getf args :index) 0)))
+        `(%with-font-from-path (,font-var ,first-arg ,index) ,@body))))
+
+;;;; ——— Phase 4.5: Font discovery ———
+
+(defun find-font-path (&rest args &key family weight slant spacing stretch)
+  "Find a system font file path matching the given criteria.
+Returns a pathname. Signals an error if no matching font is found."
+  (declare (ignore family weight slant spacing stretch))
+  (org.shirakumo.font-discovery:init)
+  (let ((font-obj (apply #'org.shirakumo.font-discovery:find-font args)))
+    (unless font-obj
+      (error "No font found matching ~{~S ~S~^, ~}" args))
+    (org.shirakumo.font-discovery:file font-obj)))
 
 ;;;; ——— Phase 3: Single glyph rendering ———
 
@@ -348,3 +378,55 @@ Returns a list of (x y bitmap). See SHAPE-TO-MSDF for bitmap format."
          (when shape
            (list (shape-to-msdf shape glyph-width glyph-height
                                 :range range :padding padding))))))))
+
+;;;; ——— Phase 4.5: Bitmap rendering ———
+
+(declaim (inline %smoothstep))
+(defun %smoothstep (edge0 edge1 x)
+  "Hermite smoothstep interpolation. Returns 0.0 for x<=edge0, 1.0 for x>=edge1,
+and smooth transition in between."
+  (let ((t-val (max 0.0 (min 1.0 (/ (- x edge0) (- edge1 edge0))))))
+    (* t-val t-val (- 3.0 (* 2.0 t-val)))))
+
+(defun shape-to-bitmap (shape width height &key (range 4.0d0) (padding 2.0) (edge-width nil))
+  "Render SHAPE to a 1-channel anti-aliased grayscale bitmap of WIDTH x HEIGHT pixels.
+Generates an SDF internally then applies smoothstep thresholding.
+RANGE and PADDING are passed to the SDF generator.
+EDGE-WIDTH controls anti-aliasing sharpness; NIL auto-computes ~1px of AA."
+  (let* ((sdf (shape-to-sdf shape width height :range range :padding padding))
+         (sdf-data (trivial-sdf:bitmap-data sdf))
+         (bmp (trivial-sdf:make-bitmap width height 1))
+         (bmp-data (trivial-sdf:bitmap-data bmp))
+         (w (if edge-width
+                (coerce edge-width 'single-float)
+                ;; Auto: ~1 pixel of AA in SDF-normalized space
+                (/ 1.0 (max 1.0 (coerce (min width height) 'single-float))))))
+    (declare (type single-float w))
+    ;; SDF encoding: 0.0=inside, 0.5=edge, 1.0=outside
+    ;; Bitmap output: 1.0=inside, 0.0=outside (standard coverage)
+    (loop for i from 0 below (length sdf-data)
+          for sd single-float = (aref sdf-data i)
+          do (setf (aref bmp-data i)
+                   (coerce (- 1.0 (%smoothstep (- 0.5 w) (+ 0.5 w) sd)) 'single-float)))
+    bmp))
+
+(defun glyph-to-bitmap (font glyph-id width height &key (range 4.0d0) (padding 2.0) (edge-width nil))
+  "Render glyph GLYPH-ID from FONT as a 1-channel anti-aliased bitmap, or NIL for blank glyphs."
+  (let ((shape (glyph-to-shape font glyph-id)))
+    (when shape
+      (shape-to-bitmap shape width height :range range :padding padding :edge-width edge-width))))
+
+(defun text-to-bitmaps (font text glyph-width glyph-height
+                        &key direction script language (range 4.0d0) (padding 2.0) (edge-width nil))
+  "Shape TEXT and render each visible glyph as a positioned anti-aliased bitmap.
+Returns a list of (x y bitmap). See SHAPE-TO-BITMAP for bitmap format."
+  (let ((glyphs (shape-text font text :direction direction
+                                       :script script :language language)))
+    (%map-shaped-glyphs
+     glyphs
+     (lambda (glyph-id)
+       (let ((shape (glyph-to-shape font glyph-id)))
+         (when shape
+           (list (shape-to-bitmap shape glyph-width glyph-height
+                                  :range range :padding padding
+                                  :edge-width edge-width))))))))

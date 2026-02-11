@@ -7,5 +7,4 @@
 *.abcl
 *.fas
 *.lib
-harfbuzz/
-icu/
+export-tests/

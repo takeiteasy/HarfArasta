@@ -25,4 +25,9 @@
    #:shape-text
    #:text-to-meshes
    #:text-to-sdfs
-   #:text-to-msdfs))
+   #:text-to-msdfs
+   ;; Phase 4.5: Font discovery + bitmap rendering
+   #:find-font-path
+   #:shape-to-bitmap
+   #:glyph-to-bitmap
+   #:text-to-bitmaps))
