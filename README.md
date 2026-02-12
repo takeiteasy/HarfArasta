@@ -14,6 +14,11 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 - **String rendering** -- shape a string and render all visible glyphs with correct positioning
 - **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `harfarasta/export`)
 
+### TODO
+
+- [ ] Add depth option for mesh generation
+- [ ] Support for woff1 (inflate) + woff2 (using [google/woff2](https://github.com/google/woff2))
+
 ## Quickstart
 
 ```lisp
@@ -39,7 +44,7 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
     (dolist (entry bitmaps)
       (format t "x=~D bitmap-w=~D~%"
               (first entry)
-              (trivial-sdf:bitmap-width (third entry)))))
+              (bitmap-width (third entry)))))
 
   ;; Generate triangle meshes
   (let ((meshes (rich-text:text-to-meshes font "Hi")))
@@ -86,10 +91,8 @@ mkdir -p build && cd build && cmake .. && make
 ## Dependencies
 
 - [cffi](https://github.com/cffi/cffi) -- foreign function interface for HarfBuzz bindings
-- [trivial-signed-distance-fields](https://github.com/takeiteasy/trivial-signed-distance-fields) -- SDF/MSDF glyph rendering
-- [trivial-delaunay-triangulation](https://github.com/takeiteasy/trivial-delaunay-triangulation) -- CDT mesh generation
-- [font-discovery](https://shinmera.com/project/font-discovery) -- system font lookup
 - [harfbuzz](https://harfbuzz.github.io/) -- text shaping engine (C shared library, built via CMake)
+- [font-discovery](https://shinmera.com/project/font-discovery) -- system font lookup
 - [zpng](https://www.xach.com/lisp/zpng/) -- PNG export (`harfarasta/export` only)
 - [fiveam](https://github.com/lispci/fiveam) -- testing (`harfarasta/tests` only)
 

@@ -1,6 +1,14 @@
 ;;;; src/export/export.lisp
 ;;;; PNG and OBJ export for harfarasta
 
+(defpackage #:harfarasta/export
+  (:nicknames #:rich-text/export)
+  (:use #:cl)
+  (:local-nicknames (#:hb #:harfarasta/harfbuzz))
+  (:export
+   #:render-string
+   #:render-tests))
+
 (in-package #:harfarasta/export)
 
 ;;; --- PNG export ---
@@ -11,7 +19,7 @@ PIXEL-HEIGHT is the height of the output image in pixels.
 COLOR is an (r g b) list with values 0-255."
   (let* ((glyphs (rich-text:shape-text font text))
          (upem (cffi:with-foreign-objects ((x :int) (y :int))
-                 (harfarasta/harfbuzz:hb-font-get-scale font x y)
+                 (hb:hb-font-get-scale font x y)
                  (cffi:mem-ref x :int)))
          ;; Scale: font units → pixels, with pixel-height = upem
          (scale (/ (coerce pixel-height 'double-float)
@@ -40,7 +48,7 @@ COLOR is an (r g b) list with values 0-255."
                             (shape (second entry))
                             (pen-x-px (round (* pen-x-fu scale))))
                        (multiple-value-bind (min-x min-y max-x max-y)
-                           (trivial-sdf:shape-bounds shape)
+                           (harfarasta::shape-bounds shape)
                          (setf vmin-x (min vmin-x (+ pen-x-px (floor (* min-x scale))
                                                      (- (ceiling padding))))
                                vmax-x (max vmax-x (+ pen-x-px (ceiling (* max-x scale))
@@ -68,7 +76,7 @@ COLOR is an (r g b) list with values 0-255."
                (pen-x-px (+ (round (* pen-x-fu scale)) x-offset)))
           ;; Get shape bounds in font units
           (multiple-value-bind (min-x min-y max-x max-y)
-              (trivial-sdf:shape-bounds shape)
+              (harfarasta::shape-bounds shape)
             (let* (
                    ;; Glyph bounding box in pixels
                    (gx0 (+ pen-x-px (floor (* min-x scale)) (- (ceiling padding))))
@@ -82,7 +90,7 @@ COLOR is an (r g b) list with values 0-255."
                    ;; Compute scale + translate for this glyph's SDF
                    ;; pixel_x = (shape_x + pen_x_fu) * scale - gx0
                    ;; → shape_x = (pixel_x + gx0) / scale - pen_x_fu
-                   ;; In trivial-sdf MSDF: shape_x = (px + 0.5 + translate_x) / sdf_scale
+                   ;; In MSDF: shape_x = (px + 0.5 + translate_x) / sdf_scale
                    ;; So sdf_scale = scale, translate_x = gx0 - pen_x_fu * scale
                    (sdf-scale scale)
                    (sdf-tx (coerce (- gx0 (* pen-x-fu scale)) 'double-float))
@@ -92,11 +100,11 @@ COLOR is an (r g b) list with values 0-255."
               (when (and (> gw 0) (> gh 0)
                          (< gx0 canvas-width) (< gy0 canvas-height)
                          (> gx1 0) (> gy1 0))
-                (let* ((sdf (trivial-sdf:generate-sdf-from-shape
+                (let* ((sdf (harfarasta::generate-sdf-from-shape
                              shape gw gh
                              :range sdf-range :scale sdf-scale
                              :translate-x sdf-tx :translate-y sdf-ty))
-                       (sdf-data (trivial-sdf:bitmap-data sdf))
+                       (sdf-data (harfarasta::bitmap-data sdf))
                        ;; Smoothstep width: ~1px of anti-aliasing in SDF space
                        (edge-w (coerce (/ 0.5d0 (* sdf-scale sdf-range)) 'single-float)))
                   ;; Composite SDF-thresholded pixels onto canvas
@@ -138,7 +146,7 @@ COLOR is an (r g b) list with values 0-255."
 SIZE is the scale factor applied to font-unit coordinates."
   (let* ((meshes (rich-text:text-to-meshes font text))
          (upem (cffi:with-foreign-objects ((x :int) (y :int))
-                 (harfarasta/harfbuzz:hb-font-get-scale font x y)
+                 (hb:hb-font-get-scale font x y)
                  (cffi:mem-ref x :int)))
          (scale (/ (coerce size 'single-float)
                    (coerce upem 'single-float)))
@@ -209,8 +217,8 @@ Uses FONT-PATH if given, otherwise discovers Arial."
       (render-string "Hi" (out "hi.obj")
                      :as :obj :font-path path :size 1.0)
 
-      (format t "6. OBJ: 'ABC' mesh, size 0.5~%")
-      (render-string "ABC" (out "abc.obj")
+      (format t "6. OBJ: 'HarfArasta' mesh, size 0.5~%")
+      (render-string "HarfArasta (آراسته)" (out "harfarasta.obj")
                      :as :obj :font-path path :size 0.5)
 
       ;; PNG tests

@@ -3,7 +3,8 @@
 (defpackage #:harfarasta/tests
   (:use #:cl #:fiveam)
   (:export #:harfarasta-suite)
-  (:import-from #:org.shirakumo.font-discovery))
+  (:import-from #:org.shirakumo.font-discovery)
+  (:local-nicknames (#:hb #:harfarasta/harfbuzz)))
 
 (in-package #:harfarasta/tests)
 
@@ -20,118 +21,118 @@
 
 (test library-loads
   "HarfBuzz shared library loads successfully"
-  (is-true (cffi:foreign-library-loaded-p 'harfarasta/harfbuzz::libharfbuzz)))
+  (is-true (cffi:foreign-library-loaded-p 'hb::libharfbuzz)))
 
 ;;; ——— Phase 1: CFFI bindings ———
 
 (test blob-lifecycle
   "Create blob from file, verify length, destroy"
-  (let ((blob (harfarasta/harfbuzz:hb-blob-create-from-file
+  (let ((blob (hb:hb-blob-create-from-file
                (namestring *test-font-path*))))
-    (is (> (harfarasta/harfbuzz:hb-blob-get-length blob) 0))
-    (harfarasta/harfbuzz:hb-blob-destroy blob)))
+    (is (> (hb:hb-blob-get-length blob) 0))
+    (hb:hb-blob-destroy blob)))
 
 (test face-from-file
   "Create face from blob, verify glyph count and upem"
-  (let* ((blob (harfarasta/harfbuzz:hb-blob-create-from-file
+  (let* ((blob (hb:hb-blob-create-from-file
                 (namestring *test-font-path*)))
-         (face (harfarasta/harfbuzz:hb-face-create blob 0)))
-    (is (> (harfarasta/harfbuzz:hb-face-get-glyph-count face) 0))
-    (is (= (harfarasta/harfbuzz:hb-face-get-upem face) 2048))
-    (harfarasta/harfbuzz:hb-face-destroy face)
-    (harfarasta/harfbuzz:hb-blob-destroy blob)))
+         (face (hb:hb-face-create blob 0)))
+    (is (> (hb:hb-face-get-glyph-count face) 0))
+    (is (= (hb:hb-face-get-upem face) 2048))
+    (hb:hb-face-destroy face)
+    (hb:hb-blob-destroy blob)))
 
 (test font-create-and-scale
   "Create font, set and get scale"
-  (let* ((blob (harfarasta/harfbuzz:hb-blob-create-from-file
+  (let* ((blob (hb:hb-blob-create-from-file
                 (namestring *test-font-path*)))
-         (face (harfarasta/harfbuzz:hb-face-create blob 0))
-         (font (harfarasta/harfbuzz:hb-font-create face)))
-    (harfarasta/harfbuzz:hb-font-set-scale font 2048 2048)
+         (face (hb:hb-face-create blob 0))
+         (font (hb:hb-font-create face)))
+    (hb:hb-font-set-scale font 2048 2048)
     (cffi:with-foreign-objects ((x :int) (y :int))
-      (harfarasta/harfbuzz:hb-font-get-scale font x y)
+      (hb:hb-font-get-scale font x y)
       (is (= (cffi:mem-ref x :int) 2048))
       (is (= (cffi:mem-ref y :int) 2048)))
-    (harfarasta/harfbuzz:hb-font-destroy font)
-    (harfarasta/harfbuzz:hb-face-destroy face)
-    (harfarasta/harfbuzz:hb-blob-destroy blob)))
+    (hb:hb-font-destroy font)
+    (hb:hb-face-destroy face)
+    (hb:hb-blob-destroy blob)))
 
 (test buffer-shape-latin
   "Shape 'Hello' and verify 5 glyphs with positive advances"
-  (let* ((blob (harfarasta/harfbuzz:hb-blob-create-from-file
+  (let* ((blob (hb:hb-blob-create-from-file
                 (namestring *test-font-path*)))
-         (face (harfarasta/harfbuzz:hb-face-create blob 0))
-         (font (harfarasta/harfbuzz:hb-font-create face))
-         (buf (harfarasta/harfbuzz:hb-buffer-create)))
-    (harfarasta/harfbuzz:hb-font-set-scale font 2048 2048)
-    (harfarasta/harfbuzz:hb-buffer-add-utf8 buf "Hello" -1 0 -1)
-    (harfarasta/harfbuzz:hb-buffer-guess-segment-properties buf)
-    (harfarasta/harfbuzz:hb-shape font buf (cffi:null-pointer) 0)
+         (face (hb:hb-face-create blob 0))
+         (font (hb:hb-font-create face))
+         (buf (hb:hb-buffer-create)))
+    (hb:hb-font-set-scale font 2048 2048)
+    (hb:hb-buffer-add-utf8 buf "Hello" -1 0 -1)
+    (hb:hb-buffer-guess-segment-properties buf)
+    (hb:hb-shape font buf (cffi:null-pointer) 0)
     (cffi:with-foreign-object (len :uint)
-      (let ((infos (harfarasta/harfbuzz:hb-buffer-get-glyph-infos buf len)))
+      (let ((infos (hb:hb-buffer-get-glyph-infos buf len)))
         (declare (ignore infos))
         (is (= (cffi:mem-ref len :uint) 5)))
-      (let ((positions (harfarasta/harfbuzz:hb-buffer-get-glyph-positions buf len)))
+      (let ((positions (hb:hb-buffer-get-glyph-positions buf len)))
         (dotimes (i (cffi:mem-ref len :uint))
-          (let ((pos (cffi:mem-aptr positions '(:struct harfarasta/harfbuzz:hb-glyph-position-t) i)))
-            (is (> (cffi:foreign-slot-value pos '(:struct harfarasta/harfbuzz:hb-glyph-position-t) 'harfarasta/harfbuzz::x-advance) 0))))))
-    (harfarasta/harfbuzz:hb-buffer-destroy buf)
-    (harfarasta/harfbuzz:hb-font-destroy font)
-    (harfarasta/harfbuzz:hb-face-destroy face)
-    (harfarasta/harfbuzz:hb-blob-destroy blob)))
+          (let ((pos (cffi:mem-aptr positions '(:struct hb:hb-glyph-position-t) i)))
+            (is (> (cffi:foreign-slot-value pos '(:struct hb:hb-glyph-position-t) 'hb::x-advance) 0))))))
+    (hb:hb-buffer-destroy buf)
+    (hb:hb-font-destroy font)
+    (hb:hb-face-destroy face)
+    (hb:hb-blob-destroy blob)))
 
 (test language-round-trip
   "Convert 'en' to hb_language and back"
-  (let* ((lang (harfarasta/harfbuzz:hb-language-from-string "en" -1))
-         (str (harfarasta/harfbuzz:hb-language-to-string lang)))
+  (let* ((lang (hb:hb-language-from-string "en" -1))
+         (str (hb:hb-language-to-string lang)))
     (is (string= str "en"))))
 
 (test tag-encoding
   "hb-script-from-tag encodes 'Latn' correctly"
-  (let ((tag (harfarasta/harfbuzz:hb-script-from-tag "Latn")))
+  (let ((tag (hb:hb-script-from-tag "Latn")))
     ;; "Latn" = #x4C61746E
     (is (= tag #x4C61746E))))
 
 (test draw-callbacks-fire
   "Draw glyph 'H' and verify move-to and close-path callbacks fire"
-  (let* ((blob (harfarasta/harfbuzz:hb-blob-create-from-file
+  (let* ((blob (hb:hb-blob-create-from-file
                 (namestring *test-font-path*)))
-         (face (harfarasta/harfbuzz:hb-face-create blob 0))
-         (font (harfarasta/harfbuzz:hb-font-create face))
-         (upem (harfarasta/harfbuzz:hb-face-get-upem face))
+         (face (hb:hb-face-create blob 0))
+         (font (hb:hb-font-create face))
+         (upem (hb:hb-face-get-upem face))
          (move-count 0)
          (close-count 0))
-    (harfarasta/harfbuzz:hb-font-set-scale font upem upem)
+    (hb:hb-font-set-scale font upem upem)
     ;; Shape "H" to get its glyph ID
-    (let ((buf (harfarasta/harfbuzz:hb-buffer-create)))
-      (harfarasta/harfbuzz:hb-buffer-add-utf8 buf "H" -1 0 -1)
-      (harfarasta/harfbuzz:hb-buffer-guess-segment-properties buf)
-      (harfarasta/harfbuzz:hb-shape font buf (cffi:null-pointer) 0)
+    (let ((buf (hb:hb-buffer-create)))
+      (hb:hb-buffer-add-utf8 buf "H" -1 0 -1)
+      (hb:hb-buffer-guess-segment-properties buf)
+      (hb:hb-shape font buf (cffi:null-pointer) 0)
       (cffi:with-foreign-object (len :uint)
-        (let* ((infos (harfarasta/harfbuzz:hb-buffer-get-glyph-infos buf len))
+        (let* ((infos (hb:hb-buffer-get-glyph-infos buf len))
                (glyph-id (cffi:foreign-slot-value
-                          (cffi:mem-aptr infos '(:struct harfarasta/harfbuzz:hb-glyph-info-t) 0)
-                          '(:struct harfarasta/harfbuzz:hb-glyph-info-t)
-                          'harfarasta/harfbuzz::codepoint)))
+                          (cffi:mem-aptr infos '(:struct hb:hb-glyph-info-t) 0)
+                          '(:struct hb:hb-glyph-info-t)
+                          'hb::codepoint)))
           ;; Now draw it
-          (let* ((sink (harfarasta/harfbuzz:make-draw-sink
+          (let* ((sink (hb:make-draw-sink
                         :move-to (lambda (x y) (declare (ignore x y)) (incf move-count))
                         :line-to (lambda (x y) (declare (ignore x y)))
                         :quadratic-to (lambda (cx cy x y) (declare (ignore cx cy x y)))
                         :cubic-to (lambda (cx0 cy0 cx1 cy1 x y) (declare (ignore cx0 cy0 cx1 cy1 x y)))
                         :close-path (lambda () (incf close-count))))
-                 (sink-id (harfarasta/harfbuzz:register-draw-data sink))
-                 (dfuncs (harfarasta/harfbuzz:make-hb-draw-funcs)))
-            (harfarasta/harfbuzz:hb-font-draw-glyph
+                 (sink-id (hb:register-draw-data sink))
+                 (dfuncs (hb:make-hb-draw-funcs)))
+            (hb:hb-font-draw-glyph
              font glyph-id dfuncs (cffi:make-pointer sink-id))
-            (harfarasta/harfbuzz:hb-draw-funcs-destroy dfuncs)
-            (harfarasta/harfbuzz:unregister-draw-data sink-id))))
-      (harfarasta/harfbuzz:hb-buffer-destroy buf))
+            (hb:hb-draw-funcs-destroy dfuncs)
+            (hb:unregister-draw-data sink-id))))
+      (hb:hb-buffer-destroy buf))
     (is (> move-count 0) "move-to should fire at least once")
     (is (> close-count 0) "close-path should fire at least once")
-    (harfarasta/harfbuzz:hb-font-destroy font)
-    (harfarasta/harfbuzz:hb-face-destroy face)
-    (harfarasta/harfbuzz:hb-blob-destroy blob)))
+    (hb:hb-font-destroy font)
+    (hb:hb-face-destroy face)
+    (hb:hb-blob-destroy blob)))
 
 ;;; ——— Phase 2: Glyph outline extraction ———
 
@@ -139,39 +140,39 @@
   "glyph-to-shape on 'A' returns a shape with contours"
   (rich-text:with-font (font *test-font-path*)
     ;; Shape "A" to get its glyph ID
-    (let ((buf (harfarasta/harfbuzz:hb-buffer-create)))
-      (harfarasta/harfbuzz:hb-buffer-add-utf8 buf "A" -1 0 -1)
-      (harfarasta/harfbuzz:hb-buffer-guess-segment-properties buf)
-      (harfarasta/harfbuzz:hb-shape font buf (cffi:null-pointer) 0)
+    (let ((buf (hb:hb-buffer-create)))
+      (hb:hb-buffer-add-utf8 buf "A" -1 0 -1)
+      (hb:hb-buffer-guess-segment-properties buf)
+      (hb:hb-shape font buf (cffi:null-pointer) 0)
       (cffi:with-foreign-object (len :uint)
-        (let* ((infos (harfarasta/harfbuzz:hb-buffer-get-glyph-infos buf len))
+        (let* ((infos (hb:hb-buffer-get-glyph-infos buf len))
                (glyph-id (cffi:foreign-slot-value
-                          (cffi:mem-aptr infos '(:struct harfarasta/harfbuzz:hb-glyph-info-t) 0)
-                          '(:struct harfarasta/harfbuzz:hb-glyph-info-t)
-                          'harfarasta/harfbuzz::codepoint))
+                          (cffi:mem-aptr infos '(:struct hb:hb-glyph-info-t) 0)
+                          '(:struct hb:hb-glyph-info-t)
+                          'hb::codepoint))
                (shape (rich-text:glyph-to-shape font glyph-id)))
           (is-true shape "Shape should not be NIL for 'A'")
-          (is (= (length (trivial-sdf:shape-contours shape)) 2)
+          (is (= (length (shape-contours shape)) 2)
               "Letter 'A' should have 2 contours (outer + inner)")))
-      (harfarasta/harfbuzz:hb-buffer-destroy buf))))
+      (hb:hb-buffer-destroy buf))))
 
 (test glyph-to-shape-space
   "glyph-to-shape on space returns NIL"
   (rich-text:with-font (font *test-font-path*)
     ;; Shape " " to get space glyph ID
-    (let ((buf (harfarasta/harfbuzz:hb-buffer-create)))
-      (harfarasta/harfbuzz:hb-buffer-add-utf8 buf " " -1 0 -1)
-      (harfarasta/harfbuzz:hb-buffer-guess-segment-properties buf)
-      (harfarasta/harfbuzz:hb-shape font buf (cffi:null-pointer) 0)
+    (let ((buf (hb:hb-buffer-create)))
+      (hb:hb-buffer-add-utf8 buf " " -1 0 -1)
+      (hb:hb-buffer-guess-segment-properties buf)
+      (hb:hb-shape font buf (cffi:null-pointer) 0)
       (cffi:with-foreign-object (len :uint)
-        (let* ((infos (harfarasta/harfbuzz:hb-buffer-get-glyph-infos buf len))
+        (let* ((infos (hb:hb-buffer-get-glyph-infos buf len))
                (glyph-id (cffi:foreign-slot-value
-                          (cffi:mem-aptr infos '(:struct harfarasta/harfbuzz:hb-glyph-info-t) 0)
-                          '(:struct harfarasta/harfbuzz:hb-glyph-info-t)
-                          'harfarasta/harfbuzz::codepoint))
+                          (cffi:mem-aptr infos '(:struct hb:hb-glyph-info-t) 0)
+                          '(:struct hb:hb-glyph-info-t)
+                          'hb::codepoint))
                (shape (rich-text:glyph-to-shape font glyph-id)))
           (is-false shape "Shape should be NIL for space glyph")))
-      (harfarasta/harfbuzz:hb-buffer-destroy buf))))
+      (hb:hb-buffer-destroy buf))))
 
 (test with-font-macro
   "with-font provides a working font handle"
@@ -180,7 +181,7 @@
              "Font should not be a null pointer")
     ;; Verify font works by checking scale
     (cffi:with-foreign-objects ((x :int) (y :int))
-      (harfarasta/harfbuzz:hb-font-get-scale font x y)
+      (hb:hb-font-get-scale font x y)
       (is (= (cffi:mem-ref x :int) 2048)
           "Scale should be set to upem (2048)"))))
 
@@ -188,17 +189,17 @@
 
 (defun %glyph-id-for-char (font char-string)
   "Shape a single character and return its glyph ID. Test helper."
-  (let ((buf (harfarasta/harfbuzz:hb-buffer-create)))
-    (harfarasta/harfbuzz:hb-buffer-add-utf8 buf char-string -1 0 -1)
-    (harfarasta/harfbuzz:hb-buffer-guess-segment-properties buf)
-    (harfarasta/harfbuzz:hb-shape font buf (cffi:null-pointer) 0)
+  (let ((buf (hb:hb-buffer-create)))
+    (hb:hb-buffer-add-utf8 buf char-string -1 0 -1)
+    (hb:hb-buffer-guess-segment-properties buf)
+    (hb:hb-shape font buf (cffi:null-pointer) 0)
     (cffi:with-foreign-object (len :uint)
-      (let* ((infos (harfarasta/harfbuzz:hb-buffer-get-glyph-infos buf len))
+      (let* ((infos (hb:hb-buffer-get-glyph-infos buf len))
              (glyph-id (cffi:foreign-slot-value
-                        (cffi:mem-aptr infos '(:struct harfarasta/harfbuzz:hb-glyph-info-t) 0)
-                        '(:struct harfarasta/harfbuzz:hb-glyph-info-t)
-                        'harfarasta/harfbuzz::codepoint)))
-        (harfarasta/harfbuzz:hb-buffer-destroy buf)
+                        (cffi:mem-aptr infos '(:struct hb:hb-glyph-info-t) 0)
+                        '(:struct hb:hb-glyph-info-t)
+                        'hb::codepoint)))
+        (hb:hb-buffer-destroy buf)
         glyph-id))))
 
 ;; SDF tests
@@ -210,9 +211,9 @@
            (shape (rich-text:glyph-to-shape font gid))
            (bmp (rich-text:shape-to-sdf shape 64 64)))
       (is-true bmp "Bitmap should not be NIL")
-      (is (= (trivial-sdf:bitmap-width bmp) 64))
-      (is (= (trivial-sdf:bitmap-height bmp) 64))
-      (is (= (trivial-sdf:bitmap-channels bmp) 1)))))
+      (is (= (bitmap-width bmp) 64))
+      (is (= (bitmap-height bmp) 64))
+      (is (= (bitmap-channels bmp) 1)))))
 
 (test shape-to-sdf-content
   "SDF bitmap has near-boundary and far-outside distance values"
@@ -220,7 +221,7 @@
     (let* ((gid (%glyph-id-for-char font "A"))
            (shape (rich-text:glyph-to-shape font gid))
            (bmp (rich-text:shape-to-sdf shape 64 64))
-           (data (trivial-sdf:bitmap-data bmp))
+           (data (bitmap-data bmp))
            (min-v 999.0)
            (max-v -999.0))
       (loop for i from 0 below (length data)
@@ -240,9 +241,9 @@
            (shape (rich-text:glyph-to-shape font gid))
            (bmp (rich-text:shape-to-msdf shape 64 64)))
       (is-true bmp "Bitmap should not be NIL")
-      (is (= (trivial-sdf:bitmap-width bmp) 64))
-      (is (= (trivial-sdf:bitmap-height bmp) 64))
-      (is (= (trivial-sdf:bitmap-channels bmp) 3)))))
+      (is (= (bitmap-width bmp) 64))
+      (is (= (bitmap-height bmp) 64))
+      (is (= (bitmap-channels bmp) 3)))))
 
 (test shape-to-msdf-content
   "MSDF bitmap has varied channel values spanning inside/outside"
@@ -250,7 +251,7 @@
     (let* ((gid (%glyph-id-for-char font "A"))
            (shape (rich-text:glyph-to-shape font gid))
            (bmp (rich-text:shape-to-msdf shape 64 64))
-           (data (trivial-sdf:bitmap-data bmp))
+           (data (bitmap-data bmp))
            (has-inside nil)
            (has-outside nil))
       (loop for i from 0 below (length data)
@@ -268,7 +269,7 @@
     (let* ((gid (%glyph-id-for-char font "H"))
            (bmp (rich-text:glyph-to-sdf font gid 32 32)))
       (is-true bmp "glyph-to-sdf should return a bitmap")
-      (is (= (trivial-sdf:bitmap-channels bmp) 1)))))
+      (is (= (bitmap-channels bmp) 1)))))
 
 (test glyph-to-msdf-convenience
   "End-to-end glyph-to-msdf works"
@@ -276,7 +277,7 @@
     (let* ((gid (%glyph-id-for-char font "H"))
            (bmp (rich-text:glyph-to-msdf font gid 32 32)))
       (is-true bmp "glyph-to-msdf should return a bitmap")
-      (is (= (trivial-sdf:bitmap-channels bmp) 3)))))
+      (is (= (bitmap-channels bmp) 3)))))
 
 (test glyph-to-sdf-space-returns-nil
   "glyph-to-sdf returns NIL for blank glyphs (space)"
@@ -464,9 +465,9 @@
       (dolist (entry results)
         (let ((bmp (third entry)))
           (is-true bmp)
-          (is (= (trivial-sdf:bitmap-width bmp) 32))
-          (is (= (trivial-sdf:bitmap-height bmp) 32))
-          (is (= (trivial-sdf:bitmap-channels bmp) 1)))))))
+          (is (= (bitmap-width bmp) 32))
+          (is (= (bitmap-height bmp) 32))
+          (is (= (bitmap-channels bmp) 1)))))))
 
 (test text-to-sdfs-skips-spaces
   "text-to-sdfs on 'A B' returns 2 entries (space skipped)"
@@ -484,7 +485,7 @@
       (dolist (entry results)
         (let ((bmp (third entry)))
           (is-true bmp)
-          (is (= (trivial-sdf:bitmap-channels bmp) 3)))))))
+          (is (= (bitmap-channels bmp) 3)))))))
 
 ;;; ——— Phase 4.5: Font discovery + bitmap rendering ———
 
@@ -508,7 +509,7 @@
     (is-true (not (cffi:null-pointer-p font))
              "Font should not be a null pointer")
     (cffi:with-foreign-objects ((x :int) (y :int))
-      (harfarasta/harfbuzz:hb-font-get-scale font x y)
+      (hb:hb-font-get-scale font x y)
       (is (> (cffi:mem-ref x :int) 0)
           "Scale should be positive"))))
 
@@ -518,7 +519,7 @@
     (is-true (not (cffi:null-pointer-p font))
              "Font should not be a null pointer")
     (cffi:with-foreign-objects ((x :int) (y :int))
-      (harfarasta/harfbuzz:hb-font-get-scale font x y)
+      (hb:hb-font-get-scale font x y)
       (is (= (cffi:mem-ref x :int) 2048)
           "Scale should be set to upem (2048)"))))
 
@@ -531,9 +532,9 @@
            (shape (rich-text:glyph-to-shape font gid))
            (bmp (rich-text:shape-to-bitmap shape 64 64)))
       (is-true bmp "Bitmap should not be NIL")
-      (is (= (trivial-sdf:bitmap-width bmp) 64))
-      (is (= (trivial-sdf:bitmap-height bmp) 64))
-      (is (= (trivial-sdf:bitmap-channels bmp) 1)))))
+      (is (= (bitmap-width bmp) 64))
+      (is (= (bitmap-height bmp) 64))
+      (is (= (bitmap-channels bmp) 1)))))
 
 (test shape-to-bitmap-content
   "Bitmap has both fully-inside (>0.9) and fully-outside (<0.1) pixels"
@@ -541,7 +542,7 @@
     (let* ((gid (%glyph-id-for-char font "A"))
            (shape (rich-text:glyph-to-shape font gid))
            (bmp (rich-text:shape-to-bitmap shape 64 64))
-           (data (trivial-sdf:bitmap-data bmp))
+           (data (bitmap-data bmp))
            (has-inside nil)
            (has-outside nil))
       (loop for i from 0 below (length data)
@@ -557,7 +558,7 @@
     (let* ((gid (%glyph-id-for-char font "A"))
            (shape (rich-text:glyph-to-shape font gid))
            (bmp (rich-text:shape-to-bitmap shape 64 64))
-           (data (trivial-sdf:bitmap-data bmp)))
+           (data (bitmap-data bmp)))
       (loop for i from 0 below (length data)
             for v = (aref data i)
             do (is (<= 0.0 v 1.0)
@@ -569,7 +570,7 @@
     (let* ((gid (%glyph-id-for-char font "H"))
            (bmp (rich-text:glyph-to-bitmap font gid 32 32)))
       (is-true bmp "glyph-to-bitmap should return a bitmap")
-      (is (= (trivial-sdf:bitmap-channels bmp) 1)))))
+      (is (= (bitmap-channels bmp) 1)))))
 
 (test glyph-to-bitmap-space-returns-nil
   "glyph-to-bitmap returns NIL for blank glyphs (space)"
@@ -586,9 +587,9 @@
       (dolist (entry results)
         (let ((bmp (third entry)))
           (is-true bmp)
-          (is (= (trivial-sdf:bitmap-width bmp) 32))
-          (is (= (trivial-sdf:bitmap-height bmp) 32))
-          (is (= (trivial-sdf:bitmap-channels bmp) 1)))))))
+          (is (= (bitmap-width bmp) 32))
+          (is (= (bitmap-height bmp) 32))
+          (is (= (bitmap-channels bmp) 1)))))))
 
 (test text-to-bitmaps-skips-spaces
   "text-to-bitmaps on 'A B' returns 2 entries (space skipped)"

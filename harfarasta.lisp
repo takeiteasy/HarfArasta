@@ -1,40 +1,38 @@
 ;;;; src/rich-text.lisp
-;;;; Phase 2: Glyph outline extraction
-;;;; Phase 3: Single glyph rendering (SDF/MSDF/mesh)
 
 (in-package #:harfarasta)
 
 (defun make-path-builder-draw-sink (builder)
-  "Create a draw-sink that forwards HarfBuzz draw events to a trivial-sdf path-builder."
-  (harfarasta/harfbuzz:make-draw-sink
+  "Create a draw-sink that forwards HarfBuzz draw events to a sdf path-builder."
+  (hb:make-draw-sink
    :move-to (lambda (x y)
-              (trivial-sdf:path-move-to builder x y))
+              (path-move-to builder x y))
    :line-to (lambda (x y)
-              (trivial-sdf:path-line-to builder x y))
+              (path-line-to builder x y))
    :quadratic-to (lambda (cx cy x y)
-                   (trivial-sdf:path-quadratic-to builder cx cy x y))
+                   (path-quadratic-to builder cx cy x y))
    :cubic-to (lambda (cx0 cy0 cx1 cy1 x y)
-               (trivial-sdf:path-cubic-to builder cx0 cy0 cx1 cy1 x y))
+               (path-cubic-to builder cx0 cy0 cx1 cy1 x y))
    :close-path (lambda ()
-                 (trivial-sdf:path-close builder))))
+                 (path-close builder))))
 
 (defun glyph-to-shape (font glyph-id)
-  "Extract glyph outline from FONT as a trivial-sdf:shape, or NIL for blank glyphs.
+  "Extract glyph outline from FONT as a shape, or NIL for blank glyphs.
 FONT is an hb_font_t pointer. GLYPH-ID is the glyph codepoint (uint32)."
-  (let* ((builder (trivial-sdf:make-path-builder))
+  (let* ((builder (make-path-builder))
          (sink (make-path-builder-draw-sink builder))
-         (sink-id (harfarasta/harfbuzz:register-draw-data sink))
-         (dfuncs (harfarasta/harfbuzz:make-hb-draw-funcs)))
+         (sink-id (hb:register-draw-data sink))
+         (dfuncs (hb:make-hb-draw-funcs)))
     (unwind-protect
          (progn
-           (harfarasta/harfbuzz:hb-font-draw-glyph
+           (hb:hb-font-draw-glyph
             font glyph-id dfuncs (cffi:make-pointer sink-id))
-           (let ((shape (trivial-sdf:path-to-shape builder)))
-             (if (null (trivial-sdf:shape-contours shape))
+           (let ((shape (path-to-shape builder)))
+             (if (null (shape-contours shape))
                  nil
                  shape)))
-      (harfarasta/harfbuzz:hb-draw-funcs-destroy dfuncs)
-      (harfarasta/harfbuzz:unregister-draw-data sink-id))))
+      (hb:hb-draw-funcs-destroy dfuncs)
+      (hb:unregister-draw-data sink-id))))
 
 (defmacro %with-font-from-path ((font-var path index) &body body)
   "Internal: Load a font from PATH with face INDEX and bind to FONT-VAR.
@@ -42,17 +40,17 @@ Manages blob, face, and font lifecycle. Sets scale to face upem."
   (let ((blob-var (gensym "BLOB"))
         (face-var (gensym "FACE"))
         (upem-var (gensym "UPEM")))
-    `(let* ((,blob-var (harfarasta/harfbuzz:hb-blob-create-from-file
+    `(let* ((,blob-var (hb:hb-blob-create-from-file
                         (namestring ,path)))
-            (,face-var (harfarasta/harfbuzz:hb-face-create ,blob-var ,index))
-            (,font-var (harfarasta/harfbuzz:hb-font-create ,face-var))
-            (,upem-var (harfarasta/harfbuzz:hb-face-get-upem ,face-var)))
-       (harfarasta/harfbuzz:hb-font-set-scale ,font-var ,upem-var ,upem-var)
+            (,face-var (hb:hb-face-create ,blob-var ,index))
+            (,font-var (hb:hb-font-create ,face-var))
+            (,upem-var (hb:hb-face-get-upem ,face-var)))
+       (hb:hb-font-set-scale ,font-var ,upem-var ,upem-var)
        (unwind-protect
             (progn ,@body)
-         (harfarasta/harfbuzz:hb-font-destroy ,font-var)
-         (harfarasta/harfbuzz:hb-face-destroy ,face-var)
-         (harfarasta/harfbuzz:hb-blob-destroy ,blob-var)))))
+         (hb:hb-font-destroy ,font-var)
+         (hb:hb-face-destroy ,face-var)
+         (hb:hb-blob-destroy ,blob-var)))))
 
 (defmacro with-font ((font-var first-arg &rest args) &body body)
   "Load a font and bind it to FONT-VAR for the duration of BODY.
@@ -92,8 +90,8 @@ Returns a pathname. Signals an error if no matching font is found."
   "Render SHAPE to a 1-channel SDF bitmap of WIDTH x HEIGHT pixels.
 RANGE is the distance field range in shape units. PADDING is border padding in pixels."
   (multiple-value-bind (scale tx ty)
-      (trivial-sdf:auto-scale-shape shape width height :padding padding)
-    (trivial-sdf:generate-sdf-from-shape shape width height
+      (auto-scale-shape shape width height :padding padding)
+    (generate-sdf-from-shape shape width height
                                           :range range :scale scale
                                           :translate-x tx :translate-y ty)))
 
@@ -101,8 +99,8 @@ RANGE is the distance field range in shape units. PADDING is border padding in p
   "Render SHAPE to a 3-channel MSDF bitmap of WIDTH x HEIGHT pixels.
 RANGE is the distance field range in shape units. PADDING is border padding in pixels."
   (multiple-value-bind (scale tx ty)
-      (trivial-sdf:auto-scale-shape shape width height :padding padding)
-    (trivial-sdf:generate-msdf shape width height
+      (auto-scale-shape shape width height :padding padding)
+    (generate-msdf shape width height
                                 :range range :scale scale
                                 :translate-x tx :translate-y ty)))
 
@@ -117,15 +115,15 @@ RANGE is the distance field range in shape units. PADDING is border padding in p
   "Sample edges of CONTOUR into line-segment points.
 Returns a list of (x . y) cons pairs forming a closed polygon."
   (let ((points nil))
-    (dolist (edge (trivial-sdf:contour-edges contour))
-      (let ((n (if (= (trivial-sdf:edge-segment-edge-type edge)
-                      trivial-sdf:+edge-type-linear+)
+    (dolist (edge (contour-edges contour))
+      (let ((n (if (= (edge-segment-edge-type edge)
+                      +edge-type-linear+)
                    1
                    segments-per-edge)))
         (dotimes (i n)
           (let* ((t-param (/ (coerce i 'double-float) (coerce n 'double-float)))
-                 (pt (trivial-sdf:edge-point edge t-param)))
-            (push (cons (trivial-sdf:vec2-x pt) (trivial-sdf:vec2-y pt))
+                 (pt (edge-point edge t-param)))
+            (push (cons (vec2-x pt) (vec2-y pt))
                   points)))))
     (nreverse points)))
 
@@ -165,7 +163,7 @@ CONTOUR-POLYGONS is a list of point-lists from %linearize-contour."
 Returns (VALUES vertices indices) where VERTICES is a (simple-array single-float (*))
 of interleaved x,y pairs and INDICES is a (simple-array (unsigned-byte 32) (*))
 of triangle index triples. SEGMENTS-PER-EDGE controls curve sampling resolution."
-  (let* ((contours (trivial-sdf:shape-contours shape))
+  (let* ((contours (shape-contours shape))
          (contour-polygons (mapcar (lambda (c)
                                      (%linearize-contour c segments-per-edge))
                                    contours))
@@ -185,7 +183,7 @@ of triangle index triples. SEGMENTS-PER-EDGE controls curve sampling resolution.
           (when (> py max-y) (setf max-y py)))))
     ;; Add margin
     (let* ((margin (* 0.1 (max (- max-x min-x) (- max-y min-y) 1.0)))
-           (ctx (tdt:make-context :bounds (list (list (- min-x margin) (- min-y margin))
+           (ctx (make-context :bounds (list (list (- min-x margin) (- min-y margin))
                                                 (list (+ max-x margin) (+ max-y margin)))))
            (constraint-id 0))
       ;; Insert contour edges as constraints
@@ -194,12 +192,12 @@ of triangle index triples. SEGMENTS-PER-EDGE controls curve sampling resolution.
           (loop for i from 0 below n
                 for p1 = (nth i polygon)
                 for p2 = (nth (mod (1+ i) n) polygon)
-                do (tdt:insert-constraint ctx
+                do (insert-constraint ctx
                                           (car p1) (cdr p1)
                                           (car p2) (cdr p2)
                                           :id (incf constraint-id)))))
       ;; Get triangles and filter interior ones
-      (let* ((triangles (tdt:get-triangles ctx
+      (let* ((triangles (get-triangles ctx
                                             :exclude-super-triangle t
                                             :as-points t))
              (interior-tris
@@ -276,49 +274,49 @@ DIRECTION is a keyword (:ltr :rtl :ttb :btt) or NIL for auto-detection.
 SCRIPT is a 4-char tag string (e.g. \"Latn\") or NIL.
 LANGUAGE is a BCP-47 string (e.g. \"en\") or NIL.
 Unset properties are guessed by hb_buffer_guess_segment_properties."
-  (let ((buf (harfarasta/harfbuzz:hb-buffer-create)))
+  (let ((buf (hb:hb-buffer-create)))
     (unwind-protect
          (progn
-           (harfarasta/harfbuzz:hb-buffer-add-utf8 buf text -1 0 -1)
+           (hb:hb-buffer-add-utf8 buf text -1 0 -1)
            (when direction
-             (harfarasta/harfbuzz:hb-buffer-set-direction buf direction))
+             (hb:hb-buffer-set-direction buf direction))
            (when script
-             (harfarasta/harfbuzz:hb-buffer-set-script
-              buf (harfarasta/harfbuzz:hb-script-from-tag script)))
+             (hb:hb-buffer-set-script
+              buf (hb:hb-script-from-tag script)))
            (when language
-             (harfarasta/harfbuzz:hb-buffer-set-language
-              buf (harfarasta/harfbuzz:hb-language-from-string language -1)))
-           (harfarasta/harfbuzz:hb-buffer-guess-segment-properties buf)
-           (harfarasta/harfbuzz:hb-shape font buf (cffi:null-pointer) 0)
+             (hb:hb-buffer-set-language
+              buf (hb:hb-language-from-string language -1)))
+           (hb:hb-buffer-guess-segment-properties buf)
+           (hb:hb-shape font buf (cffi:null-pointer) 0)
            (cffi:with-foreign-object (len :uint)
-             (let ((infos (harfarasta/harfbuzz:hb-buffer-get-glyph-infos buf len))
+             (let ((infos (hb:hb-buffer-get-glyph-infos buf len))
                    (count (cffi:mem-ref len :uint)))
-               (let ((positions (harfarasta/harfbuzz:hb-buffer-get-glyph-positions buf len)))
+               (let ((positions (hb:hb-buffer-get-glyph-positions buf len)))
                  (loop for i from 0 below count
                        for info = (cffi:mem-aptr infos
-                                                 '(:struct harfarasta/harfbuzz:hb-glyph-info-t) i)
+                                                 '(:struct hb:hb-glyph-info-t) i)
                        for pos = (cffi:mem-aptr positions
-                                                '(:struct harfarasta/harfbuzz:hb-glyph-position-t) i)
+                                                '(:struct hb:hb-glyph-position-t) i)
                        collect (make-shaped-glyph
                                 :glyph-id (cffi:foreign-slot-value
-                                           info '(:struct harfarasta/harfbuzz:hb-glyph-info-t)
-                                           'harfarasta/harfbuzz::codepoint)
+                                           info '(:struct hb:hb-glyph-info-t)
+                                           'hb::codepoint)
                                 :cluster (cffi:foreign-slot-value
-                                          info '(:struct harfarasta/harfbuzz:hb-glyph-info-t)
-                                          'harfarasta/harfbuzz::cluster)
+                                          info '(:struct hb:hb-glyph-info-t)
+                                          'hb::cluster)
                                 :x-advance (cffi:foreign-slot-value
-                                            pos '(:struct harfarasta/harfbuzz:hb-glyph-position-t)
-                                            'harfarasta/harfbuzz::x-advance)
+                                            pos '(:struct hb:hb-glyph-position-t)
+                                            'hb::x-advance)
                                 :y-advance (cffi:foreign-slot-value
-                                            pos '(:struct harfarasta/harfbuzz:hb-glyph-position-t)
-                                            'harfarasta/harfbuzz::y-advance)
+                                            pos '(:struct hb:hb-glyph-position-t)
+                                            'hb::y-advance)
                                 :x-offset (cffi:foreign-slot-value
-                                           pos '(:struct harfarasta/harfbuzz:hb-glyph-position-t)
-                                           'harfarasta/harfbuzz::x-offset)
+                                           pos '(:struct hb:hb-glyph-position-t)
+                                           'hb::x-offset)
                                 :y-offset (cffi:foreign-slot-value
-                                           pos '(:struct harfarasta/harfbuzz:hb-glyph-position-t)
-                                           'harfarasta/harfbuzz::y-offset)))))))
-      (harfarasta/harfbuzz:hb-buffer-destroy buf))))
+                                           pos '(:struct hb:hb-glyph-position-t)
+                                           'hb::y-offset)))))))
+      (hb:hb-buffer-destroy buf))))
 
 (defun %map-shaped-glyphs (shaped-glyphs render-fn)
   "Walk SHAPED-GLYPHS accumulating cursor position, calling RENDER-FN for each glyph.
@@ -394,9 +392,9 @@ Generates an SDF internally then applies smoothstep thresholding.
 RANGE and PADDING are passed to the SDF generator.
 EDGE-WIDTH controls anti-aliasing sharpness; NIL auto-computes ~1px of AA."
   (let* ((sdf (shape-to-sdf shape width height :range range :padding padding))
-         (sdf-data (trivial-sdf:bitmap-data sdf))
-         (bmp (trivial-sdf:make-bitmap width height 1))
-         (bmp-data (trivial-sdf:bitmap-data bmp))
+         (sdf-data (bitmap-data sdf))
+         (bmp (make-bitmap width height 1))
+         (bmp-data (bitmap-data bmp))
          (w (if edge-width
                 (coerce edge-width 'single-float)
                 ;; Auto: ~1 pixel of AA in SDF-normalized space
