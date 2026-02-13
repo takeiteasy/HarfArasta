@@ -3,7 +3,8 @@
 (defpackage #:harfarasta
   (:nicknames #:rich-text)
   (:use #:cl)
-  (:local-nicknames (#:hb #:harfarasta/harfbuzz))
+  (:local-nicknames (#:hb #:harfarasta/harfbuzz)
+                    (#:woff2 #:harfarasta/woff2))
   (:export
    #:glyph-to-shape
    #:with-font
@@ -28,4 +29,20 @@
    #:find-font-path
    #:shape-to-bitmap
    #:glyph-to-bitmap
-   #:text-to-bitmaps))
+   #:text-to-bitmaps
+   ;; Bitmap struct accessors
+   #:bitmap
+   #:bitmap-data
+   #:bitmap-width
+   #:bitmap-height
+   #:bitmap-channels
+   #:bitmap-to-bytes
+   ;; Shape utilities
+   #:shape-bounds
+   #:auto-scale-shape
+   ;; Persistent font management
+   #:create-font
+   #:destroy-font
+   ;; Low-level SDF generation (explicit scale/translate)
+   #:generate-sdf-from-shape
+   #:make-bitmap))

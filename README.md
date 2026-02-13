@@ -14,10 +14,15 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 - **String rendering** -- shape a string and render all visible glyphs with correct positioning
 - **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `harfarasta/export`)
 
+### Formats Supported
+
+- **TTF/OTF** -- TrueType/OpenType fonts
+- **AAT** -- Apple Advanced Typography fonts
+- **WOFF1/WOFF2** -- Web Open Font Format 1.0/2.0
+
 ### TODO
 
 - [ ] Add depth option for mesh generation
-- [ ] Support for woff1 (inflate) + woff2 (using [google/woff2](https://github.com/google/woff2))
 
 ## Quickstart
 
@@ -84,7 +89,8 @@ mkdir -p build && cd build && cmake .. && make
 | System | Description |
 |--------|-------------|
 | `harfarasta` | Core library (shaping, SDF/MSDF/bitmap/mesh rendering, font discovery) |
-| `harfarasta/harfbuzz` | Internal CFFI bindings to HarfBuzz (not part of public API) |
+| `harfarasta/harfbuzz` | Internal CFFI bindings to HarfBuzz |
+| `harfarasta/woff2` | Internal CFFI bindings to libwoff2shim for WOFF2 decoding |
 | `harfarasta/export` | PNG and OBJ export utilities |
 | `harfarasta/tests` | Test suite (fiveam) |
 
@@ -92,6 +98,7 @@ mkdir -p build && cd build && cmake .. && make
 
 - [cffi](https://github.com/cffi/cffi) -- foreign function interface for HarfBuzz bindings
 - [harfbuzz](https://harfbuzz.github.io/) -- text shaping engine (C shared library, built via CMake)
+- [google/woff2](https://github.com/google/woff2) -- WOFF2 decoder (C shared library, built via CMake)
 - [font-discovery](https://shinmera.com/project/font-discovery) -- system font lookup
 - [zpng](https://www.xach.com/lisp/zpng/) -- PNG export (`harfarasta/export` only)
 - [fiveam](https://github.com/lispci/fiveam) -- testing (`harfarasta/tests` only)

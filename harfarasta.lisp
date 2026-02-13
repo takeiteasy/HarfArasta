@@ -34,14 +34,86 @@ FONT is an hb_font_t pointer. GLYPH-ID is the glyph codepoint (uint32)."
       (hb:hb-draw-funcs-destroy dfuncs)
       (hb:unregister-draw-data sink-id))))
 
+;;;; ——— Font format detection ———
+
+(defun %read-file-bytes (path)
+  "Read an entire file into a (simple-array (unsigned-byte 8) (*))."
+  (with-open-file (s path :direction :input :element-type '(unsigned-byte 8))
+    (let* ((len (file-length s))
+           (buf (make-array len :element-type '(unsigned-byte 8))))
+      (read-sequence buf s)
+      buf)))
+
+(defun %font-format-magic (path)
+  "Read first 4 bytes of PATH and return :woff1, :woff2, or :raw."
+  (with-open-file (s path :direction :input :element-type '(unsigned-byte 8))
+    (let ((b0 (read-byte s nil 0))
+          (b1 (read-byte s nil 0))
+          (b2 (read-byte s nil 0))
+          (b3 (read-byte s nil 0)))
+      (let ((sig (logior (ash b0 24) (ash b1 16) (ash b2 8) b3)))
+        (cond
+          ((= sig #x774F4646) :woff1)   ; "wOFF"
+          ((= sig #x774F4632) :woff2)   ; "wOF2"
+          (t :raw))))))
+
+(defun %decode-font-file (path)
+  "If PATH is WOFF1/WOFF2, decode to TTF/OTF bytes. Returns byte vector or NIL for raw fonts."
+  (ecase (%font-format-magic path)
+    (:woff1
+     (woff1-decode-to-vector (%read-file-bytes path)))
+    (:woff2
+     (harfarasta/woff2:woff2-decode-to-vector (%read-file-bytes path)))
+    (:raw nil)))
+
+(defun %create-blob-from-bytes (byte-vector)
+  "Create an hb_blob_t from a Lisp byte vector. The foreign memory is managed by HarfBuzz."
+  (let* ((len (length byte-vector))
+         (foreign-buf (cffi:foreign-alloc :uint8 :count len)))
+    (loop for i below len
+          do (setf (cffi:mem-aref foreign-buf :uint8 i) (aref byte-vector i)))
+    (hb:hb-blob-create foreign-buf len :writable
+                       foreign-buf (cffi:callback %free-foreign-buf-cb))))
+
+(cffi:defcallback %free-foreign-buf-cb :void ((user-data :pointer))
+  (cffi:foreign-free user-data))
+
+;;;; ——— Persistent font management ———
+
+(defun create-font (path &key (index 0))
+  "Load a font from PATH (TTF, OTF, WOFF, or WOFF2).
+Returns (VALUES font face blob upem). All three pointers must be freed with DESTROY-FONT."
+  (let* ((decoded (%decode-font-file path))
+         (blob (if decoded
+                   (%create-blob-from-bytes decoded)
+                   (hb:hb-blob-create-from-file (namestring path))))
+         (face (hb:hb-face-create blob index))
+         (font (hb:hb-font-create face))
+         (upem (hb:hb-face-get-upem face)))
+    (hb:hb-font-set-scale font upem upem)
+    (values font face blob upem)))
+
+(defun destroy-font (font face blob)
+  "Destroy font resources created by CREATE-FONT."
+  (hb:hb-font-destroy font)
+  (hb:hb-face-destroy face)
+  (hb:hb-blob-destroy blob))
+
+;;;; ——— Font loading macro (internal) ———
+
 (defmacro %with-font-from-path ((font-var path index) &body body)
   "Internal: Load a font from PATH with face INDEX and bind to FONT-VAR.
-Manages blob, face, and font lifecycle. Sets scale to face upem."
+Manages blob, face, and font lifecycle. Sets scale to face upem.
+Transparently handles WOFF1 and WOFF2 formats."
   (let ((blob-var (gensym "BLOB"))
         (face-var (gensym "FACE"))
-        (upem-var (gensym "UPEM")))
-    `(let* ((,blob-var (hb:hb-blob-create-from-file
-                        (namestring ,path)))
+        (upem-var (gensym "UPEM"))
+        (decoded-var (gensym "DECODED")))
+    `(let* ((,decoded-var (%decode-font-file ,path))
+            (,blob-var (if ,decoded-var
+                           (%create-blob-from-bytes ,decoded-var)
+                           (hb:hb-blob-create-from-file
+                            (namestring ,path))))
             (,face-var (hb:hb-face-create ,blob-var ,index))
             (,font-var (hb:hb-font-create ,face-var))
             (,upem-var (hb:hb-face-get-upem ,face-var)))

@@ -23,7 +23,7 @@
 # SOFTWARE.
 
 cmake_minimum_required(VERSION 3.5)
-project(harfarasta CXX)
+project(harfarasta C CXX)
 
 option(HARFBUZZ_BUILD_ICU "Enable building of ICU" OFF)
 if (APPLE)
@@ -389,3 +389,60 @@ target_compile_definitions(harfbuzz PUBLIC
     )
 
 set_target_properties(harfbuzz PROPERTIES CXX_STANDARD 14)
+
+
+## Brotli decoder (static) ##
+##############################
+
+add_library(brotli_decoder STATIC
+    woff2/brotli/c/common/dictionary.c
+    woff2/brotli/c/common/transform.c
+    woff2/brotli/c/dec/bit_reader.c
+    woff2/brotli/c/dec/decode.c
+    woff2/brotli/c/dec/huffman.c
+    woff2/brotli/c/dec/state.c)
+
+target_include_directories(brotli_decoder PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/woff2/brotli/c/include)
+
+set_target_properties(brotli_decoder PROPERTIES
+    C_STANDARD 99
+    POSITION_INDEPENDENT_CODE ON)
+
+
+## WOFF2 decoder (static) ##
+#############################
+
+add_library(woff2_decoder STATIC
+    woff2/src/woff2_common.cc
+    woff2/src/woff2_dec.cc
+    woff2/src/woff2_out.cc
+    woff2/src/table_tags.cc
+    woff2/src/variable_length.cc
+    woff2/src/font.cc
+    woff2/src/glyph.cc
+    woff2/src/normalize.cc
+    woff2/src/transform.cc)
+
+target_include_directories(woff2_decoder PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/woff2/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/woff2/src)
+
+target_link_libraries(woff2_decoder PRIVATE brotli_decoder)
+
+set_target_properties(woff2_decoder PROPERTIES
+    CXX_STANDARD 11
+    POSITION_INDEPENDENT_CODE ON)
+
+
+## WOFF2 C shim (shared) ##
+############################
+
+add_library(woff2shim SHARED woff2_shim.cpp)
+
+target_link_libraries(woff2shim PRIVATE woff2_decoder brotli_decoder)
+
+target_include_directories(woff2shim PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/woff2/include)
+
+set_target_properties(woff2shim PROPERTIES CXX_STANDARD 11)

@@ -1,2 +1,3 @@
 harfbuzz/** linguist-vendored
 icu/** linguist-vendored
+woff2/** linguist-vendored

@@ -9,15 +9,27 @@
   :serial t
   :components ((:file "harfbuzz")))
 
+(asdf:defsystem #:harfarasta/woff2
+  :description "CFFI bindings to libwoff2shim for WOFF2 decoding"
+  :author "George Watson <gigolo@hotmail.co.uk>"
+  :license "GPLv3"
+  :version "0.1.0"
+  :depends-on (#:cffi)
+  :serial t
+  :components ((:file "woff2")))
+
 (asdf:defsystem #:harfarasta
   :description "Platform/backend-agnostic text rendering and shaping for Common Lisp"
   :author "George Watson <gigolo@hotmail.co.uk>"
   :license "GPLv3"
   :version "0.1.0"
   :depends-on (#:harfarasta/harfbuzz
+               #:harfarasta/woff2
                #:font-discovery)
   :serial t
   :components ((:file "package")
+               (:file "inflate")
+               (:file "woff")
                (:file "types")
                (:file "delaunay")
                (:file "edge-coloring")
