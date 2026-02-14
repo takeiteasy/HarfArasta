@@ -92,16 +92,15 @@ mkdir -p build && cd build && cmake .. && make
 | `harfarasta/harfbuzz` | Internal CFFI bindings to HarfBuzz |
 | `harfarasta/woff2` | Internal CFFI bindings to libwoff2shim for WOFF2 decoding |
 | `harfarasta/export` | PNG and OBJ export utilities |
-| `harfarasta/tests` | Test suite (fiveam) |
+| `harfarasta/tests` | Tests using `harfarasta/export` |
 
 ## Dependencies
 
 - [cffi](https://github.com/cffi/cffi) -- foreign function interface for HarfBuzz bindings
-- [harfbuzz](https://harfbuzz.github.io/) -- text shaping engine (C shared library, built via CMake)
-- [google/woff2](https://github.com/google/woff2) -- WOFF2 decoder (C shared library, built via CMake)
+- [harfbuzz](https://github.com/harfbuzz/harfbuzz) -- text shaping engine (C shared library, built via CMake)
+- [woff2](https://github.com/google/woff2) -- WOFF2 decoder (C shared library, built via CMake)
 - [font-discovery](https://shinmera.com/project/font-discovery) -- system font lookup
 - [zpng](https://www.xach.com/lisp/zpng/) -- PNG export (`harfarasta/export` only)
-- [fiveam](https://github.com/lispci/fiveam) -- testing (`harfarasta/tests` only)
 
 ## Export Package
 

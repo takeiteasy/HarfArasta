@@ -37,8 +37,7 @@
                (:file "msdf")
                (:file "distance")
                (:file "utils")
-               (:file "harfarasta"))
-  :in-order-to ((test-op (test-op #:harfarasta/tests))))
+               (:file "harfarasta")))
 
 (asdf:defsystem #:harfarasta/export
   :description "PNG and OBJ export utilities for harfarasta"
@@ -51,10 +50,6 @@
 
 (asdf:defsystem #:harfarasta/tests
   :description "Tests for harfarasta"
-  :depends-on (#:harfarasta #:fiveam)
+  :depends-on (#:harfarasta/export)
   :serial t
-  :components ((:file "tests"))
-  :perform (test-op (o s)
-             (uiop:symbol-call :fiveam :run!
-                               (uiop:find-symbol* :harfarasta-suite
-                                                  :harfarasta/tests))))
+  :components ((:file "tests")))

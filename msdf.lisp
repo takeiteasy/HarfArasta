@@ -355,32 +355,98 @@
 
 ;;; Single-channel SDF from vector shape
 
+;;; Winding number computation via angle summation
+;;; This avoids polynomial root-finding artifacts from ray casting by instead
+;;; summing the angles subtended by each edge as seen from the query point.
+;;; The total angle divided by 2π gives the winding number.
+
+(defun %shape-winding-at (shape px py)
+  "Compute the winding number at point (PX,PY) for SHAPE using angle summation.
+   Subdivides each edge into linear segments and sums the signed angles.
+   Non-zero result means the point is inside the shape (non-zero fill rule)."
+  (declare (type shape shape) (type single-float px py))
+  (let ((total-angle 0.0d0)
+        (n-subdivs 8))
+    (dolist (contour (shape-contours shape))
+      (dolist (edge (contour-edges contour))
+        ;; Get start point of edge
+        (let* ((p0 (edge-point edge 0.0d0))
+               (prev-dx (coerce (- (vec2-x p0) px) 'double-float))
+               (prev-dy (coerce (- (vec2-y p0) py) 'double-float)))
+          ;; Subdivide edge and sum angles between consecutive sample points
+          (loop for i from 1 to n-subdivs
+                for t-val double-float = (/ (coerce i 'double-float) n-subdivs)
+                for pt = (edge-point edge t-val)
+                for dx double-float = (coerce (- (vec2-x pt) px) 'double-float)
+                for dy double-float = (coerce (- (vec2-y pt) py) 'double-float)
+                for cross double-float = (- (* prev-dx dy) (* prev-dy dx))
+                for dot double-float = (+ (* prev-dx dx) (* prev-dy dy))
+                do (incf total-angle (atan cross dot))
+                   (setf prev-dx dx
+                         prev-dy dy)))))
+    (round total-angle (* 2.0d0 pi))))
+
+;;; SDF generation
+
 (defun generate-sdf-from-shape (shape width height
                                 &key (range 4.0d0) (scale 1.0d0)
                                      (translate-x 0.0d0) (translate-y 0.0d0)
                                      output)
-  "Generate a single-channel signed distance field from a vector shape.
+  "Generate a single-channel signed distance field directly from a vector shape.
 
-   Same parameters as GENERATE-MSDF but returns a 1-channel bitmap."
+   For each pixel, finds the nearest edge across all contours for the distance
+   magnitude, and uses ray-casting winding number to determine the correct sign
+   (inside/outside). This avoids MSDF edge coloring artifacts and per-edge sign
+   errors at concave corners.
+
+   Returns a 1-channel bitmap with values in [0,1] where:
+   - Values < 0.5 = inside the shape
+   - 0.5 = on the edge
+   - Values > 0.5 = outside the shape."
   (declare (type shape shape)
            (type fixnum width height)
            (type double-float range scale translate-x translate-y))
 
-  ;; Use MSDF generation and take median
-  (let* ((msdf (generate-msdf shape width height
-                              :range range :scale scale
-                              :translate-x translate-x :translate-y translate-y))
-         (msdf-data (bitmap-data msdf))
-         (out (or output (make-bitmap width height 1)))
-         (out-data (bitmap-data out)))
+  ;; Normalize shape (split single-edge contours) but NO edge coloring needed
+  (normalize-shape shape)
 
+  (let* ((out (or output (make-bitmap width height 1)))
+         (out-data (bitmap-data out))
+         (inv-range (/ 1.0d0 range)))
+
+    ;; Process each pixel
     (loop for y from 0 below height
           do (loop for x from 0 below width
-                   for msdf-idx = (* 3 (+ x (* y width)))
-                   for out-idx = (+ x (* y width))
-                   do (setf (aref out-data out-idx)
-                            (coerce (median (coerce (aref msdf-data msdf-idx) 'double-float)
-                                            (coerce (aref msdf-data (+ msdf-idx 1)) 'double-float)
-                                            (coerce (aref msdf-data (+ msdf-idx 2)) 'double-float))
-                                    'single-float))))
+                   ;; Convert pixel to shape coordinates (same convention as MSDF)
+                   for px = (coerce (/ (+ x 0.5d0 translate-x) scale) 'single-float)
+                   for py = (coerce (/ (+ y 0.5d0 translate-y) scale) 'single-float)
+                   for p = (vec2 px py)
+                   do (let ((min-dist (make-signed-distance +negative-infinity+ 1.0d0))
+                            (nearest-edge nil)
+                            (nearest-param 0.0d0))
+                        ;; Find the nearest edge across ALL contours
+                        (dolist (contour (shape-contours shape))
+                          (dolist (edge (contour-edges contour))
+                            (multiple-value-bind (dist param)
+                                (edge-signed-distance edge p)
+                              (when (signed-distance< dist min-dist)
+                                (setf min-dist dist
+                                      nearest-edge edge
+                                      nearest-param param)))))
+                        ;; Pseudo-distance correction for smooth corners
+                        (when nearest-edge
+                          (distance-to-pseudo-distance min-dist p
+                                                       nearest-param nearest-edge))
+                        (let* ((abs-dist (abs (signed-distance-dist min-dist)))
+                               ;; Use winding number to determine inside/outside
+                               (winding (%shape-winding-at shape px py))
+                               ;; Inside (winding != 0): positive distance → SDF < 0.5
+                               ;; Outside (winding == 0): negative distance → SDF > 0.5
+                               (signed-dist (if (not (zerop winding))
+                                                abs-dist
+                                                (- abs-dist))))
+                          (setf (aref out-data (+ x (* y width)))
+                                (clampf (coerce (- 0.5d0 (* signed-dist inv-range))
+                                                'single-float)
+                                        0.0 1.0))))))
     out))
