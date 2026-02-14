@@ -148,15 +148,19 @@ COLOR is an (r g b) list with values 0-255."
 
 ;;; --- OBJ export ---
 
-(defun %render-string-obj (file font text size)
+(defun %render-string-obj (file font text size &key depth)
   "Render TEXT using FONT to a Wavefront OBJ file at FILE.
-SIZE is the scale factor applied to font-unit coordinates."
-  (let* ((meshes (rich-text:text-to-meshes font text))
-         (upem (cffi:with-foreign-objects ((x :int) (y :int))
+SIZE is the scale factor applied to font-unit coordinates.
+DEPTH, when non-NIL, extrudes the mesh along Z in the same units as SIZE."
+  (let* ((upem (cffi:with-foreign-objects ((x :int) (y :int))
                  (hb:hb-font-get-scale font x y)
                  (cffi:mem-ref x :int)))
          (scale (/ (coerce size 'single-float)
                    (coerce upem 'single-float)))
+         ;; Convert depth from output units to font units so that after
+         ;; the OBJ export multiplies by scale, z comes out correct.
+         (depth-fu (when depth (/ (coerce depth 'single-float) scale)))
+         (meshes (rich-text:text-to-meshes font text :depth depth-fu))
          (global-vertex-offset 0))
     (with-open-file (out file :direction :output
                               :if-exists :supersede
@@ -169,14 +173,16 @@ SIZE is the scale factor applied to font-unit coordinates."
             for pen-y = (second entry)
             for vertices = (third entry)
             for indices = (fourth entry)
-            for vert-count = (/ (length vertices) 2)
+            for stride = (if depth 3 2)
+            for vert-count = (/ (length vertices) stride)
             do
                (format out "# Glyph ~D~%" glyph-idx)
                ;; Write vertices
-               (loop for i from 0 below (length vertices) by 2
+               (loop for i from 0 below (length vertices) by stride
                      for vx = (+ (* (aref vertices i) scale) (* pen-x scale))
                      for vy = (* (aref vertices (1+ i)) scale)
-                     do (format out "v ~F ~F 0.0~%" vx vy))
+                     for vz = (if depth (* (aref vertices (+ i 2)) scale) 0.0)
+                     do (format out "v ~F ~F ~F~%" vx vy vz))
                ;; Write faces (1-indexed)
                (loop for i from 0 below (length indices) by 3
                      for i0 = (+ (aref indices i) global-vertex-offset 1)
@@ -190,16 +196,17 @@ SIZE is the scale factor applied to font-unit coordinates."
 
 (defun render-string (text file &key (as :png) font-path (family "Arial")
                                      (weight :regular) (size 64)
-                                     (color '(255 255 255)))
+                                     (color '(255 255 255)) depth)
   "Render TEXT to FILE in the specified format.
 AS is :png or :obj.
 Font can be specified by FONT-PATH or by FAMILY/WEIGHT for discovery.
 SIZE is the pixel height for PNG or scale factor for OBJ.
-COLOR is an (R G B) list (0-255) used for PNG output."
+COLOR is an (R G B) list (0-255) used for PNG output.
+DEPTH, when non-NIL, extrudes OBJ meshes along Z."
   (let ((path (if font-path
                   (pathname font-path)
                   (rich-text:find-font-path :family family :weight weight))))
     (rich-text:with-font (f path)
       (ecase as
         (:png (%render-string-png file f text size color))
-        (:obj (%render-string-obj file f text size))))))
+        (:obj (%render-string-obj file f text size :depth depth))))))

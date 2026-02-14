@@ -44,8 +44,33 @@ Uses FONT-PATH if given, otherwise discovers Arial."
       (time (render-string "Hi" (out "hi.obj")
                            :as :obj :font-path path :size 1.0))
 
-      (format t "6. OBJ: 'HarfArasta' mesh, size 0.5~%")
+      (format t "6. OBJ: 'HarfArasta' extruded mesh, size 0.5, depth 0.1~%")
       (time (render-string "HarfArasta (آراسته)" (out "harfarasta.obj")
-                           :as :obj :font-path path :size 0.5))
+                           :as :obj :font-path path :size 0.5 :depth 0.1))
 
-      (format t "~%Done. ~D files written to ~A~%" 6 output-dir))))
+      ;; Fontstash test
+      (format t "7. Fontstash: atlas of 'ABCabc123' glyphs, SDF mode~%")
+      (time
+       (rich-text:with-font (f path)
+         (let ((atlas (harfarasta/fontstash:make-font-atlas
+                       :width 256 :height 256 :mode :sdf :padding 2)))
+           (let ((entries (harfarasta/fontstash:atlas-add-text
+                           atlas f "ABCabc123" 32 32)))
+             (format t "   Packed ~D glyphs into atlas~%" (count-if #'identity entries))
+             (dolist (e entries)
+               (when e
+                 (let ((r (harfarasta/fontstash:atlas-entry-region e)))
+                   (format t "   glyph ~D @ (~D,~D) ~Dx~D  UV (~,3F,~,3F)-(~,3F,~,3F)~%"
+                           (harfarasta/fontstash:atlas-entry-glyph-id e)
+                           (harfarasta/fontstash:atlas-region-x r)
+                           (harfarasta/fontstash:atlas-region-y r)
+                           (harfarasta/fontstash:atlas-region-width r)
+                           (harfarasta/fontstash:atlas-region-height r)
+                           (harfarasta/fontstash:atlas-entry-u0 e)
+                           (harfarasta/fontstash:atlas-entry-v0 e)
+                           (harfarasta/fontstash:atlas-entry-u1 e)
+                           (harfarasta/fontstash:atlas-entry-v1 e))))))
+           (harfarasta/fontstash:atlas-to-png atlas (out "atlas-sdf.png"))
+           (format t "   Atlas PNG written to ~A~%" (out "atlas-sdf.png")))))
+
+      (format t "~%Done. ~D files written to ~A~%" 7 output-dir))))

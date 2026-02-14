@@ -42,7 +42,10 @@
    #:auto-scale-shape
    ;; Persistent font management
    #:create-font
+   #:create-font-from-bytes
    #:destroy-font
+   ;; Font format identification
+   #:identify-font-format
    ;; Low-level SDF generation (explicit scale/translate)
    #:generate-sdf-from-shape
    #:make-bitmap))

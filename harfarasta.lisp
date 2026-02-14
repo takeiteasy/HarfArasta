@@ -57,6 +57,37 @@ FONT is an hb_font_t pointer. GLYPH-ID is the glyph codepoint (uint32)."
           ((= sig #x774F4632) :woff2)   ; "wOF2"
           (t :raw))))))
 
+(defun %font-format-magic-from-bytes (bytes)
+  "Detect font format from first 4 bytes of BYTES array.
+Returns :woff1, :woff2, :otf, :ttf, or :raw."
+  (when (< (length bytes) 4)
+    (return-from %font-format-magic-from-bytes :raw))
+  (let ((sig (logior (ash (aref bytes 0) 24)
+                     (ash (aref bytes 1) 16)
+                     (ash (aref bytes 2) 8)
+                     (aref bytes 3))))
+    (cond
+      ((= sig #x774F4646) :woff1)     ; "wOFF"
+      ((= sig #x774F4632) :woff2)     ; "wOF2"
+      ((= sig #x4F54544F) :otf)       ; "OTTO"
+      ((= sig #x00010000) :ttf)       ; TrueType
+      (t :raw))))
+
+(defun identify-font-format (bytes)
+  "Identify the font format from a byte vector.
+Returns :ttf, :otf, :woff1, or :woff2, or NIL if unrecognized."
+  (let ((fmt (%font-format-magic-from-bytes bytes)))
+    (if (eq fmt :raw) nil fmt)))
+
+(defun %decode-font-bytes (bytes)
+  "Decode WOFF1/WOFF2 byte vector to raw font bytes. Returns decoded bytes,
+or the original BYTES unchanged for TTF/OTF/raw formats."
+  (let ((fmt (%font-format-magic-from-bytes bytes)))
+    (case fmt
+      (:woff1 (woff1-decode-to-vector bytes))
+      (:woff2 (harfarasta/woff2:woff2-decode-to-vector bytes))
+      (otherwise bytes))))
+
 (defun %decode-font-file (path)
   "If PATH is WOFF1/WOFF2, decode to TTF/OTF bytes. Returns byte vector or NIL for raw fonts."
   (ecase (%font-format-magic path)
@@ -87,6 +118,17 @@ Returns (VALUES font face blob upem). All three pointers must be freed with DEST
          (blob (if decoded
                    (%create-blob-from-bytes decoded)
                    (hb:hb-blob-create-from-file (namestring path))))
+         (face (hb:hb-face-create blob index))
+         (font (hb:hb-font-create face))
+         (upem (hb:hb-face-get-upem face)))
+    (hb:hb-font-set-scale font upem upem)
+    (values font face blob upem)))
+
+(defun create-font-from-bytes (bytes &key (index 0))
+  "Load a font from a byte vector (TTF, OTF, WOFF, or WOFF2).
+Returns (VALUES font face blob upem). All three pointers must be freed with DESTROY-FONT."
+  (let* ((decoded (%decode-font-bytes bytes))
+         (blob (%create-blob-from-bytes decoded))
          (face (hb:hb-face-create blob index))
          (font (hb:hb-font-create face))
          (upem (hb:hb-face-get-upem face)))
@@ -124,20 +166,49 @@ Transparently handles WOFF1 and WOFF2 formats."
          (hb:hb-face-destroy ,face-var)
          (hb:hb-blob-destroy ,blob-var)))))
 
+(defmacro %with-font-from-bytes ((font-var bytes-form index) &body body)
+  "Internal: Load a font from a byte vector with face INDEX and bind to FONT-VAR.
+Manages blob, face, and font lifecycle. Sets scale to face upem.
+Transparently handles WOFF1 and WOFF2 formats."
+  (let ((blob-var (gensym "BLOB"))
+        (face-var (gensym "FACE"))
+        (upem-var (gensym "UPEM"))
+        (decoded-var (gensym "DECODED")))
+    `(let* ((,decoded-var (%decode-font-bytes ,bytes-form))
+            (,blob-var (%create-blob-from-bytes ,decoded-var))
+            (,face-var (hb:hb-face-create ,blob-var ,index))
+            (,font-var (hb:hb-font-create ,face-var))
+            (,upem-var (hb:hb-face-get-upem ,face-var)))
+       (hb:hb-font-set-scale ,font-var ,upem-var ,upem-var)
+       (unwind-protect
+            (progn ,@body)
+         (hb:hb-font-destroy ,font-var)
+         (hb:hb-face-destroy ,face-var)
+         (hb:hb-blob-destroy ,blob-var)))))
+
 (defmacro with-font ((font-var first-arg &rest args) &body body)
   "Load a font and bind it to FONT-VAR for the duration of BODY.
 Manages blob, face, and font lifecycle. Sets scale to face upem.
 
-Two calling conventions:
-  (with-font (f \"/path/to/font.ttf\") ...)           ; path mode
-  (with-font (f \"/path/to/font.ttf\" :index 1) ...)  ; path mode with index
-  (with-font (f :family \"Helvetica\") ...)            ; discovery mode
-  (with-font (f :family \"Roboto\" :weight :bold) ...) ; discovery mode"
+Calling conventions:
+  (with-font (f \"/path/to/font.ttf\") ...)              ; path mode
+  (with-font (f \"/path/to/font.ttf\" :index 1) ...)     ; path mode with index
+  (with-font (f :family \"Helvetica\") ...)               ; discovery mode
+  (with-font (f :family \"Roboto\" :weight :bold) ...)    ; discovery mode
+  (with-font (f :bytes my-byte-vector) ...)              ; byte vector mode
+  (with-font (f :bytes my-byte-vector :index 1) ...)     ; byte vector mode with index"
   (if (keywordp first-arg)
-      ;; Discovery mode: all args are a font-discovery plist
-      (let ((path-var (gensym "PATH")))
-        `(let ((,path-var (find-font-path ,first-arg ,@args)))
-           (%with-font-from-path (,font-var ,path-var 0) ,@body)))
+      (cond
+        ;; Byte vector mode
+        ((eq first-arg :bytes)
+         (let* ((bytes-form (first args))
+                (index (or (getf (rest args) :index) 0)))
+           `(%with-font-from-bytes (,font-var ,bytes-form ,index) ,@body)))
+        ;; Discovery mode: all args are a font-discovery plist
+        (t
+         (let ((path-var (gensym "PATH")))
+           `(let ((,path-var (find-font-path ,first-arg ,@args)))
+              (%with-font-from-path (,font-var ,path-var 0) ,@body)))))
       ;; Path mode: first-arg is the path, remaining args are &key index
       (let ((index (or (getf args :index) 0)))
         `(%with-font-from-path (,font-var ,first-arg ,index) ,@body))))
@@ -230,11 +301,75 @@ CONTOUR-POLYGONS is a list of point-lists from %linearize-contour."
                           (decf winding)))))))))
     (not (zerop winding))))
 
-(defun shape-to-mesh (shape &key (segments-per-edge 8))
+(defun %extrude-mesh (vertices-2d indices-2d contour-outlines depth)
+  "Extrude a 2D mesh into 3D. VERTICES-2D is a flat array of x,y pairs.
+INDICES-2D is the triangle index array. CONTOUR-OUTLINES is a list of lists,
+each inner list containing vertex indices forming a closed contour outline.
+DEPTH is the extrusion depth along Z.
+Returns (VALUES vertices-3d indices-3d)."
+  (let* ((n-verts (/ (length vertices-2d) 2))
+         (n-face-indices (length indices-2d))
+         ;; Count side wall triangles: 2 per contour edge
+         (n-side-edges (loop for contour in contour-outlines sum (length contour)))
+         (n-side-indices (* n-side-edges 6))
+         ;; Front + back vertices, each with x,y,z
+         (vertices-3d (make-array (* 2 n-verts 3) :element-type 'single-float))
+         (indices-3d (make-array (+ (* 2 n-face-indices) n-side-indices)
+                                 :element-type '(unsigned-byte 32)))
+         (depth-f (coerce depth 'single-float))
+         (idx-pos 0))
+    ;; Front face vertices at z=0
+    (loop for i from 0 below n-verts
+          for src = (* i 2)
+          for dst = (* i 3)
+          do (setf (aref vertices-3d dst) (aref vertices-2d src)
+                   (aref vertices-3d (+ dst 1)) (aref vertices-2d (+ src 1))
+                   (aref vertices-3d (+ dst 2)) 0.0))
+    ;; Back face vertices at z=depth
+    (loop for i from 0 below n-verts
+          for src = (* i 2)
+          for dst = (* (+ i n-verts) 3)
+          do (setf (aref vertices-3d dst) (aref vertices-2d src)
+                   (aref vertices-3d (+ dst 1)) (aref vertices-2d (+ src 1))
+                   (aref vertices-3d (+ dst 2)) depth-f))
+    ;; Front face indices (same winding)
+    (loop for i from 0 below n-face-indices
+          do (setf (aref indices-3d idx-pos) (aref indices-2d i))
+             (incf idx-pos))
+    ;; Back face indices (reversed winding, offset by n-verts)
+    (loop for i from 0 below n-face-indices by 3
+          do (setf (aref indices-3d idx-pos) (+ (aref indices-2d i) n-verts)
+                   (aref indices-3d (+ idx-pos 1)) (+ (aref indices-2d (+ i 2)) n-verts)
+                   (aref indices-3d (+ idx-pos 2)) (+ (aref indices-2d (+ i 1)) n-verts))
+             (incf idx-pos 3))
+    ;; Side walls: two triangles per contour edge
+    (dolist (contour contour-outlines)
+      (let ((n (length contour)))
+        (loop for i from 0 below n
+              for v0 = (nth i contour)
+              for v1 = (nth (mod (1+ i) n) contour)
+              for v0-back = (+ v0 n-verts)
+              for v1-back = (+ v1 n-verts)
+              do ;; Triangle 1: v0, v1, v1-back
+                 (setf (aref indices-3d idx-pos) v0
+                       (aref indices-3d (+ idx-pos 1)) v1
+                       (aref indices-3d (+ idx-pos 2)) v1-back)
+                 (incf idx-pos 3)
+                 ;; Triangle 2: v0, v1-back, v0-back
+                 (setf (aref indices-3d idx-pos) v0
+                       (aref indices-3d (+ idx-pos 1)) v1-back
+                       (aref indices-3d (+ idx-pos 2)) v0-back)
+                 (incf idx-pos 3))))
+    (values vertices-3d indices-3d)))
+
+(defun shape-to-mesh (shape &key (segments-per-edge 8) depth)
   "Triangulate SHAPE into an indexed mesh via constrained Delaunay triangulation.
 Returns (VALUES vertices indices) where VERTICES is a (simple-array single-float (*))
-of interleaved x,y pairs and INDICES is a (simple-array (unsigned-byte 32) (*))
-of triangle index triples. SEGMENTS-PER-EDGE controls curve sampling resolution."
+of interleaved x,y pairs (2D) or x,y,z triples (3D when DEPTH is non-NIL)
+and INDICES is a (simple-array (unsigned-byte 32) (*)) of triangle index triples.
+SEGMENTS-PER-EDGE controls curve sampling resolution.
+When DEPTH is a number, the mesh is extruded along Z with front face at z=0
+and back face at z=DEPTH, with side walls connecting the contour edges."
   (let* ((contours (shape-contours shape))
          (contour-polygons (mapcar (lambda (c)
                                      (%linearize-contour c segments-per-edge))
@@ -296,7 +431,7 @@ of triangle index triples. SEGMENTS-PER-EDGE controls curve sampling resolution.
                 (push key vert-list)
                 (incf vert-count))
               (push (gethash key vert-table) index-list))))
-        ;; Build output arrays
+        ;; Build 2D output arrays
         (let ((vertices (make-array (* 2 vert-count) :element-type 'single-float))
               (indices (make-array (length index-list) :element-type '(unsigned-byte 32))))
           (loop for vt in (nreverse vert-list)
@@ -306,7 +441,18 @@ of triangle index triples. SEGMENTS-PER-EDGE controls curve sampling resolution.
           (loop for idx in (nreverse index-list)
                 for i from 0
                 do (setf (aref indices i) idx))
-          (values vertices indices))))))
+          (if depth
+              ;; Extrude to 3D: collect contour outline vertex indices
+              (let ((contour-outlines
+                      (mapcar (lambda (polygon)
+                                (mapcar (lambda (pt)
+                                          (let ((key (cons (coerce (car pt) 'single-float)
+                                                           (coerce (cdr pt) 'single-float))))
+                                            (gethash key vert-table)))
+                                        polygon))
+                              contour-polygons)))
+                (%extrude-mesh vertices indices contour-outlines depth))
+              (values vertices indices)))))))
 
 ;;; Glyph-level convenience functions
 
@@ -322,12 +468,12 @@ of triangle index triples. SEGMENTS-PER-EDGE controls curve sampling resolution.
     (when shape
       (shape-to-msdf shape width height :range range :padding padding))))
 
-(defun glyph-to-mesh (font glyph-id &key (segments-per-edge 8))
+(defun glyph-to-mesh (font glyph-id &key (segments-per-edge 8) depth)
   "Triangulate glyph GLYPH-ID from FONT into an indexed mesh, or NIL for blank glyphs.
 Returns (VALUES vertices indices) — see SHAPE-TO-MESH for details."
   (let ((shape (glyph-to-shape font glyph-id)))
     (when shape
-      (shape-to-mesh shape :segments-per-edge segments-per-edge))))
+      (shape-to-mesh shape :segments-per-edge segments-per-edge :depth depth))))
 
 ;;;; ——— Phase 4: String shaping + rendering ———
 
@@ -407,7 +553,7 @@ Returns a list of (pen-x pen-y . render-data) for non-NIL results."
       (incf cursor-y (shaped-glyph-y-advance sg)))
     (nreverse results)))
 
-(defun text-to-meshes (font text &key direction script language (segments-per-edge 8))
+(defun text-to-meshes (font text &key direction script language (segments-per-edge 8) depth)
   "Shape TEXT and triangulate each visible glyph into a positioned mesh.
 Returns a list of (x y vertices indices). See SHAPE-TO-MESH for array formats."
   (let ((glyphs (shape-text font text :direction direction
@@ -418,7 +564,7 @@ Returns a list of (x y vertices indices). See SHAPE-TO-MESH for array formats."
        (let ((shape (glyph-to-shape font glyph-id)))
          (when shape
            (multiple-value-bind (vertices indices)
-               (shape-to-mesh shape :segments-per-edge segments-per-edge)
+               (shape-to-mesh shape :segments-per-edge segments-per-edge :depth depth)
              (list vertices indices))))))))
 
 (defun text-to-sdfs (font text glyph-width glyph-height

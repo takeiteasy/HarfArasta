@@ -13,19 +13,7 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 - **Mesh generation** -- constrained Delaunay triangulation of glyph outlines
 - **String rendering** -- shape a string and render all visible glyphs with correct positioning
 - **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `harfarasta/export`)
-
-### Formats Supported
-
-- **TTF/OTF** -- TrueType/OpenType fonts
-- **AAT** -- Apple Advanced Typography fonts
 - **WOFF1/WOFF2** -- Web Open Font Format 1.0/2.0
-
-### TODO
-
-- [ ] Add depth option for mesh generation
-- [ ] Load and identify fonts from memory
-- [ ] Extend export for atlas generation (like font stash)
-- [ ] Clean up subprojects (harfbuzz, woff2)
 
 ## Quickstart
 
