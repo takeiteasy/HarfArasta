@@ -2,22 +2,30 @@
 
 # Update harfbuzz
 rm -rf harfbuzz/
-git clone --depth=1 https://github.com/behdad/harfbuzz.git
-rm -rf harfbuzz/tests
-rm -rf harfbuzz/.git
+UUID=$(uuidgen)
+git clone --depth=1 https://github.com/behdad/harfbuzz.git "/tmp/$UUID"
+mkdir harfbuzz
+mv "/tmp/$UUID/src" harfbuzz/
+rm -rf "/tmp/$UUID"
 
 # Update ICU
 rm -rf icu/
-git clone --depth=1 https://github.com/unicode-org/icu.git
-mv icu/icu4c/source/common /tmp
-mkdir /tmp/stubdata
-mv icu/icu4c/source/stubdata/stubdata.* /tmp/stubdata
-rm -rf icu/* icu/.*
-mv /tmp/common icu/
-mv /tmp/stubdata icu/
-rm -rf icu/.git
+UUID=$(uuidgen)
+git clone --depth=1 https://github.com/unicode-org/icu.git "/tmp/$UUID"
+mkdir icu
+mv "/tmp/$UUID/icu4c/source/common" icu/
+mv "/tmp/$UUID/icu4c/source/stubdata/stubdata.*" icu/stubdata/
+rm -rf "/tmp/$UUID"
 
 # Update woff2/brotli
 rm -rf woff2
-git clone --depth=1 --recursive https://github.com/google/woff2.git
+UUID=$(uuidgen)
+git clone --depth=1 --recursive https://github.com/google/woff2.git "/tmp/$UUID"
+mkdir -p woff2/brotli/c
+mv "/tmp/$UUID/brotli/c/common" woff2/brotli/c/
+mv "/tmp/$UUID/brotli/c/dec" woff2/brotli/c/
+mv "/tmp/$UUID/brotli/c/include" woff2/brotli/c/
+mv "/tmp/$UUID/src" woff2/
+mv "/tmp/$UUID/include" woff2/
+rm -rf "/tmp/$UUID"
 

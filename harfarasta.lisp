@@ -213,7 +213,6 @@ Calling conventions:
       (let ((index (or (getf args :index) 0)))
         `(%with-font-from-path (,font-var ,first-arg ,index) ,@body))))
 
-;;;; ——— Phase 4.5: Font discovery ———
 
 (defun find-font-path (&rest args &key family weight slant spacing stretch)
   "Find a system font file path matching the given criteria.
@@ -225,7 +224,7 @@ Returns a pathname. Signals an error if no matching font is found."
       (error "No font found matching ~{~S ~S~^, ~}" args))
     (org.shirakumo.font-discovery:file font-obj)))
 
-;;;; ——— Phase 3: Single glyph rendering ———
+;;;; ———  3: Single glyph rendering ———
 
 ;;; SDF/MSDF rendering
 
@@ -475,7 +474,6 @@ Returns (VALUES vertices indices) — see SHAPE-TO-MESH for details."
     (when shape
       (shape-to-mesh shape :segments-per-edge segments-per-edge :depth depth))))
 
-;;;; ——— Phase 4: String shaping + rendering ———
 
 (defstruct shaped-glyph
   "Per-glyph shaping output from HarfBuzz."
@@ -595,7 +593,6 @@ Returns a list of (x y bitmap). See SHAPE-TO-MSDF for bitmap format."
            (list (shape-to-msdf shape glyph-width glyph-height
                                 :range range :padding padding))))))))
 
-;;;; ——— Phase 4.5: Bitmap rendering ———
 
 (declaim (inline %smoothstep))
 (defun %smoothstep (edge0 edge1 x)
