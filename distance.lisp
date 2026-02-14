@@ -4,7 +4,7 @@
 
 (in-package #:harfarasta)
 
-;;; Point on curve functions
+;;; Point on curve functions (vec2-returning, used by MSDF and public API)
 
 (defun linear-point (edge param)
   "Get point on linear edge at parameter T in [0,1]."
@@ -48,7 +48,79 @@
     (#.+edge-type-quadratic+ (quadratic-point edge param))
     (#.+edge-type-cubic+ (cubic-point edge param))))
 
-;;; Direction (tangent) functions
+;;; Scalar point-on-curve functions returning (values x y) as single-floats
+;;; These avoid vec2 allocation in the hot SDF loop.
+
+(declaim (inline linear-point-xy quadratic-point-xy cubic-point-xy edge-point-xy))
+
+(defun linear-point-xy (edge param)
+  "Get point on linear edge at parameter T. Returns (values x y)."
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (type single-float param))
+  (let* ((p0 (edge-segment-p0 edge))
+         (p1 (edge-segment-p1 edge))
+         (w param)
+         (w1 (- 1.0 w)))
+    (values (+ (* w1 (vec2-x p0)) (* w (vec2-x p1)))
+            (+ (* w1 (vec2-y p0)) (* w (vec2-y p1))))))
+
+(defun quadratic-point-xy (edge param)
+  "Get point on quadratic Bezier at parameter T. Returns (values x y)."
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (type single-float param))
+  (let* ((p0 (edge-segment-p0 edge))
+         (p1 (edge-segment-p1 edge))
+         (p2 (edge-segment-p2 edge))
+         (w param)
+         (w1 (- 1.0 w))
+         ;; First level: mix(p0,p1,w) and mix(p1,p2,w)
+         (ax (+ (* w1 (vec2-x p0)) (* w (vec2-x p1))))
+         (ay (+ (* w1 (vec2-y p0)) (* w (vec2-y p1))))
+         (bx (+ (* w1 (vec2-x p1)) (* w (vec2-x p2))))
+         (by (+ (* w1 (vec2-y p1)) (* w (vec2-y p2)))))
+    ;; Second level: mix(a,b,w)
+    (values (+ (* w1 ax) (* w bx))
+            (+ (* w1 ay) (* w by)))))
+
+(defun cubic-point-xy (edge param)
+  "Get point on cubic Bezier at parameter T. Returns (values x y)."
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (type single-float param))
+  (let* ((p0 (edge-segment-p0 edge))
+         (p1 (edge-segment-p1 edge))
+         (p2 (edge-segment-p2 edge))
+         (p3 (edge-segment-p3 edge))
+         (w param)
+         (w1 (- 1.0 w))
+         ;; p12 = mix(p1,p2,w)
+         (p12x (+ (* w1 (vec2-x p1)) (* w (vec2-x p2))))
+         (p12y (+ (* w1 (vec2-y p1)) (* w (vec2-y p2))))
+         ;; a = mix(p0,p1,w)
+         (ax (+ (* w1 (vec2-x p0)) (* w (vec2-x p1))))
+         (ay (+ (* w1 (vec2-y p0)) (* w (vec2-y p1))))
+         ;; b = mix(a,p12,w)
+         (bx (+ (* w1 ax) (* w p12x)))
+         (by (+ (* w1 ay) (* w p12y)))
+         ;; c = mix(p2,p3,w)
+         (cx (+ (* w1 (vec2-x p2)) (* w (vec2-x p3))))
+         (cy (+ (* w1 (vec2-y p2)) (* w (vec2-y p3))))
+         ;; d = mix(p12,c,w)
+         (dx (+ (* w1 p12x) (* w cx)))
+         (dy (+ (* w1 p12y) (* w cy))))
+    ;; result = mix(b,d,w)
+    (values (+ (* w1 bx) (* w dx))
+            (+ (* w1 by) (* w dy)))))
+
+(defun edge-point-xy (edge param)
+  "Get point on edge at parameter T. Returns (values x y) as single-floats."
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (type single-float param))
+  (case (edge-segment-edge-type edge)
+    (#.+edge-type-linear+ (linear-point-xy edge param))
+    (#.+edge-type-quadratic+ (quadratic-point-xy edge param))
+    (#.+edge-type-cubic+ (cubic-point-xy edge param))))
+
+;;; Direction (tangent) functions (vec2-returning, used by MSDF)
 
 (defun linear-direction (edge param)
   "Get direction (tangent) of linear edge."
@@ -94,93 +166,199 @@
     (#.+edge-type-quadratic+ (quadratic-direction edge param))
     (#.+edge-type-cubic+ (cubic-direction edge param))))
 
-;;; Signed distance functions
+;;; Scalar direction functions returning (values dx dy) as single-floats
+
+(declaim (inline linear-direction-xy quadratic-direction-xy cubic-direction-xy edge-direction-xy))
+
+(defun linear-direction-xy (edge param)
+  "Get direction of linear edge. Returns (values dx dy)."
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (ignore param))
+  (let ((p0 (edge-segment-p0 edge))
+        (p1 (edge-segment-p1 edge)))
+    (values (- (vec2-x p1) (vec2-x p0))
+            (- (vec2-y p1) (vec2-y p0)))))
+
+(defun quadratic-direction-xy (edge param)
+  "Get direction of quadratic Bezier at parameter T. Returns (values dx dy)."
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (type single-float param))
+  (let* ((p0 (edge-segment-p0 edge))
+         (p1 (edge-segment-p1 edge))
+         (p2 (edge-segment-p2 edge))
+         (w param)
+         (w1 (- 1.0 w))
+         ;; a = p1 - p0, b = p2 - p1
+         (ax (- (vec2-x p1) (vec2-x p0)))
+         (ay (- (vec2-y p1) (vec2-y p0)))
+         (bx (- (vec2-x p2) (vec2-x p1)))
+         (by (- (vec2-y p2) (vec2-y p1))))
+    (values (+ (* w1 ax) (* w bx))
+            (+ (* w1 ay) (* w by)))))
+
+(defun cubic-direction-xy (edge param)
+  "Get direction of cubic Bezier at parameter T. Returns (values dx dy)."
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (type single-float param))
+  (let* ((p0 (edge-segment-p0 edge))
+         (p1 (edge-segment-p1 edge))
+         (p2 (edge-segment-p2 edge))
+         (p3 (edge-segment-p3 edge))
+         (w param)
+         (w1 (- 1.0 w))
+         ;; a = p1-p0, b = p2-p1
+         (ax (- (vec2-x p1) (vec2-x p0)))
+         (ay (- (vec2-y p1) (vec2-y p0)))
+         (bx (- (vec2-x p2) (vec2-x p1)))
+         (by (- (vec2-y p2) (vec2-y p1)))
+         ;; c = mix(a,b,w)
+         (cx (+ (* w1 ax) (* w bx)))
+         (cy (+ (* w1 ay) (* w by)))
+         ;; p3-p2
+         (p3p2x (- (vec2-x p3) (vec2-x p2)))
+         (p3p2y (- (vec2-y p3) (vec2-y p2)))
+         ;; d = mix(b, p3-p2, w)
+         (dx (+ (* w1 bx) (* w p3p2x)))
+         (dy (+ (* w1 by) (* w p3p2y)))
+         ;; t-vec = mix(c,d,w)
+         (tx (+ (* w1 cx) (* w dx)))
+         (ty (+ (* w1 cy) (* w dy))))
+    ;; Handle degenerate case where tangent is zero
+    (if (and (zerop tx) (zerop ty))
+        (cond ((= param 0.0)
+               (values (- (vec2-x p2) (vec2-x p0))
+                       (- (vec2-y p2) (vec2-y p0))))
+              ((= param 1.0)
+               (values (- (vec2-x p3) (vec2-x p1))
+                       (- (vec2-y p3) (vec2-y p1))))
+              (t (values tx ty)))
+        (values tx ty))))
+
+(defun edge-direction-xy (edge param)
+  "Get direction of edge at parameter T. Returns (values dx dy)."
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (type single-float param))
+  (case (edge-segment-edge-type edge)
+    (#.+edge-type-linear+ (linear-direction-xy edge param))
+    (#.+edge-type-quadratic+ (quadratic-direction-xy edge param))
+    (#.+edge-type-cubic+ (cubic-direction-xy edge param))))
+
+;;; Signed distance functions - scalar math, no vec2 allocation
+;;; Each returns (values signed-distance param) for compatibility with MSDF code.
 
 (defun linear-signed-distance (edge origin)
   "Calculate signed distance from ORIGIN to linear edge.
    Returns (values signed-distance param)."
-  (declare (type edge-segment edge) (type vec2 origin))
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (type vec2 origin))
   (let* ((p0 (edge-segment-p0 edge))
          (p1 (edge-segment-p1 edge))
-         (aq (v2- origin p0))
-         (ab (v2- p1 p0))
-         (ab-dot-ab (v2-dot ab ab))
+         (ox (vec2-x origin)) (oy (vec2-y origin))
+         (p0x (vec2-x p0)) (p0y (vec2-y p0))
+         (p1x (vec2-x p1)) (p1y (vec2-y p1))
+         ;; aq = origin - p0
+         (aqx (- ox p0x)) (aqy (- oy p0y))
+         ;; ab = p1 - p0
+         (abx (- p1x p0x)) (aby (- p1y p0y))
+         ;; dot products
+         (ab-dot-ab (+ (* abx abx) (* aby aby)))
          (param (if (zerop ab-dot-ab) 0.0d0
-                    (coerce (/ (v2-dot aq ab) ab-dot-ab) 'double-float)))
-         (eq-point (if (> param 0.5d0) p1 p0))
-         (eq (v2- eq-point origin))
-         (endpoint-distance (coerce (v2-length eq) 'double-float)))
+                    (coerce (/ (+ (* aqx abx) (* aqy aby)) ab-dot-ab) 'double-float)))
+         ;; eq = nearest-endpoint - origin
+         (eqx (if (> param 0.5d0) (- p1x ox) (- p0x ox)))
+         (eqy (if (> param 0.5d0) (- p1y oy) (- p0y oy)))
+         (endpoint-distance (coerce (sqrt (+ (* eqx eqx) (* eqy eqy))) 'double-float)))
     ;; Check if closest point is on the segment
     (when (and (> param 0.0d0) (< param 1.0d0))
-      (let* ((ab-ortho (v2-orthonormal ab nil nil))
-             (ortho-dist (coerce (v2-dot ab-ortho aq) 'double-float)))
-        (when (< (abs ortho-dist) endpoint-distance)
-          (return-from linear-signed-distance
-            (values (make-signed-distance ortho-dist 0.0d0) param)))))
+      ;; Compute orthonormal to ab
+      (let* ((ab-len (sqrt (+ (* abx abx) (* aby aby)))))
+        (unless (zerop ab-len)
+          (let* ((inv-len (/ 1.0 ab-len))
+                 ;; orthonormal (polarity=nil → clockwise): (y/len, -x/len)
+                 (ortho-x (* aby inv-len))
+                 (ortho-y (* (- abx) inv-len))
+                 (ortho-dist (coerce (+ (* ortho-x aqx) (* ortho-y aqy)) 'double-float)))
+            (when (< (abs ortho-dist) endpoint-distance)
+              (return-from linear-signed-distance
+                (values (make-signed-distance ortho-dist 0.0d0) param)))))))
     ;; Return endpoint distance
-    (let* ((ab-norm (v2-normalize ab))
-           (eq-norm (v2-normalize eq))
-           (cross-val (coerce (v2-cross aq ab) 'double-float))
+    (let* ((ab-len (sqrt (+ (* abx abx) (* aby aby))))
+           (eq-len (sqrt (+ (* eqx eqx) (* eqy eqy))))
+           ;; normalize ab
+           (ab-nx (if (< ab-len 1e-10) 0.0 (/ abx ab-len)))
+           (ab-ny (if (< ab-len 1e-10) 0.0 (/ aby ab-len)))
+           ;; normalize eq
+           (eq-nx (if (< eq-len 1e-10) 0.0 (/ eqx eq-len)))
+           (eq-ny (if (< eq-len 1e-10) 0.0 (/ eqy eq-len)))
+           ;; cross(aq, ab)
+           (cross-val (coerce (- (* aqx aby) (* aqy abx)) 'double-float))
            (dist (* (coerce (non-zero-sign cross-val) 'double-float) endpoint-distance))
-           (d (abs (coerce (v2-dot ab-norm eq-norm) 'double-float))))
+           ;; dot(ab-norm, eq-norm)
+           (d (abs (coerce (+ (* ab-nx eq-nx) (* ab-ny eq-ny)) 'double-float))))
       (values (make-signed-distance dist d) param))))
 
 (defun quadratic-signed-distance (edge origin)
   "Calculate signed distance from ORIGIN to quadratic Bezier edge.
    Returns (values signed-distance param)."
-  (declare (type edge-segment edge) (type vec2 origin))
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (type vec2 origin))
   (let* ((p0 (edge-segment-p0 edge))
          (p1 (edge-segment-p1 edge))
          (p2 (edge-segment-p2 edge))
-         (qa (v2- p0 origin))
-         (ab (v2- p1 p0))
+         (ox (vec2-x origin)) (oy (vec2-y origin))
+         (p0x (vec2-x p0)) (p0y (vec2-y p0))
+         (p1x (vec2-x p1)) (p1y (vec2-y p1))
+         (p2x (vec2-x p2)) (p2y (vec2-y p2))
+         ;; qa = p0 - origin
+         (qax (- p0x ox)) (qay (- p0y oy))
+         ;; ab = p1 - p0
+         (abx (- p1x p0x)) (aby (- p1y p0y))
          ;; br = p0 + p2 - 2*p1
-         (br (vec2 (+ (vec2-x p0) (vec2-x p2) (- (vec2-x p1)) (- (vec2-x p1)))
-                   (+ (vec2-y p0) (vec2-y p2) (- (vec2-y p1)) (- (vec2-y p1)))))
+         (brx (+ p0x p2x (- p1x) (- p1x)))
+         (bry (+ p0y p2y (- p1y) (- p1y)))
          ;; Coefficients for cubic: a*t^3 + b*t^2 + c*t + d = 0
-         (a (coerce (v2-dot br br) 'double-float))
-         (b (* 3.0d0 (coerce (v2-dot ab br) 'double-float)))
-         (c (+ (* 2.0d0 (coerce (v2-dot ab ab) 'double-float))
-               (coerce (v2-dot qa br) 'double-float)))
-         (d (coerce (v2-dot qa ab) 'double-float))
+         (a (coerce (+ (* brx brx) (* bry bry)) 'double-float))
+         (b (* 3.0d0 (coerce (+ (* abx brx) (* aby bry)) 'double-float)))
+         (c (+ (* 2.0d0 (coerce (+ (* abx abx) (* aby aby)) 'double-float))
+               (coerce (+ (* qax brx) (* qay bry)) 'double-float)))
+         (d (coerce (+ (* qax abx) (* qay aby)) 'double-float))
          (solutions (solve-cubic a b c d))
          ;; Distance from endpoint p0
-         (cross-val (coerce (v2-cross ab qa) 'double-float))
-         (min-distance (* (coerce (non-zero-sign cross-val) 'double-float)
-                          (coerce (v2-length qa) 'double-float)))
-         (param (- (/ (coerce (v2-dot qa ab) 'double-float)
-                      (coerce (v2-dot ab ab) 'double-float)))))
+         (cross-val (coerce (- (* abx qay) (* aby qax)) 'double-float))
+         (qa-len (coerce (sqrt (+ (* qax qax) (* qay qay))) 'double-float))
+         (min-distance (* (coerce (non-zero-sign cross-val) 'double-float) qa-len))
+         (ab-dot-ab (+ (* abx abx) (* aby aby)))
+         (param (if (zerop ab-dot-ab) 0.0d0
+                    (- (/ (coerce (+ (* qax abx) (* qay aby)) 'double-float)
+                          (coerce ab-dot-ab 'double-float))))))
     ;; Check distance from endpoint p2
-    (let* ((p2-p1 (v2- p2 p1))
-           (p2-origin (v2- p2 origin))
-           (cross-p2 (coerce (v2-cross p2-p1 p2-origin) 'double-float))
-           (dist-p2 (* (coerce (non-zero-sign cross-p2) 'double-float)
-                       (coerce (v2-length p2-origin) 'double-float))))
+    (let* ((p2p1x (- p2x p1x)) (p2p1y (- p2y p1y))
+           (p2ox (- p2x ox)) (p2oy (- p2y oy))
+           (cross-p2 (coerce (- (* p2p1x p2oy) (* p2p1y p2ox)) 'double-float))
+           (p2o-len (coerce (sqrt (+ (* p2ox p2ox) (* p2oy p2oy))) 'double-float))
+           (dist-p2 (* (coerce (non-zero-sign cross-p2) 'double-float) p2o-len)))
       (when (< (abs dist-p2) (abs min-distance))
         (setf min-distance dist-p2)
-        (let* ((origin-p1 (v2- origin p1))
-               (p2-p1-dot (v2-dot p2-p1 p2-p1)))
-          (setf param (if (zerop p2-p1-dot) 1.0d0
-                          (coerce (/ (v2-dot origin-p1 p2-p1) p2-p1-dot) 'double-float))))))
+        (let* ((op1x (- ox p1x)) (op1y (- oy p1y))
+               (p2p1-dot (+ (* p2p1x p2p1x) (* p2p1y p2p1y))))
+          (setf param (if (zerop p2p1-dot) 1.0d0
+                          (coerce (/ (+ (* op1x p2p1x) (* op1y p2p1y)) p2p1-dot) 'double-float))))))
     ;; Check interior solutions
     (dolist (t-val solutions)
       (when (and (> t-val 0.0d0) (< t-val 1.0d0))
-        ;; Point on curve: p0 + 2*t*ab + t^2*br
-        (let* ((end-point (vec2 (+ (vec2-x p0)
-                                   (* 2.0 (coerce t-val 'single-float) (vec2-x ab))
-                                   (* (coerce (* t-val t-val) 'single-float) (vec2-x br)))
-                                (+ (vec2-y p0)
-                                   (* 2.0 (coerce t-val 'single-float) (vec2-y ab))
-                                   (* (coerce (* t-val t-val) 'single-float) (vec2-y br)))))
-               (end-origin (v2- end-point origin))
-               ;; Tangent at t: d/dt[p0 + 2t*ab + t^2*br] = 2(ab + t*br)
-               ;; Factor of 2 doesn't affect sign of cross product
-               (tf (coerce t-val 'single-float))
-               (tangent-at-t (vec2 (+ (vec2-x ab) (* tf (vec2-x br)))
-                                   (+ (vec2-y ab) (* tf (vec2-y br)))))
-               (cross-end (coerce (v2-cross tangent-at-t end-origin) 'double-float))
-               (distance (* (coerce (non-zero-sign cross-end) 'double-float)
-                            (coerce (v2-length end-origin) 'double-float))))
+        (let* ((tf (coerce t-val 'single-float))
+               ;; Point on curve: p0 + 2*t*ab + t^2*br
+               (epx (+ p0x (* 2.0 tf abx) (* (* tf tf) brx)))
+               (epy (+ p0y (* 2.0 tf aby) (* (* tf tf) bry)))
+               ;; end-origin
+               (eox (- epx ox)) (eoy (- epy oy))
+               ;; Tangent at t: ab + t*br (factor of 2 doesn't affect cross sign)
+               (tanx (+ abx (* tf brx)))
+               (tany (+ aby (* tf bry)))
+               ;; cross(tangent, end-origin)
+               (cross-end (coerce (- (* tanx eoy) (* tany eox)) 'double-float))
+               (eo-len (coerce (sqrt (+ (* eox eox) (* eoy eoy))) 'double-float))
+               (distance (* (coerce (non-zero-sign cross-end) 'double-float) eo-len)))
           (when (<= (abs distance) (abs min-distance))
             (setf min-distance distance
                   param t-val)))))
@@ -188,112 +366,147 @@
     (if (and (>= param 0.0d0) (<= param 1.0d0))
         (values (make-signed-distance min-distance 0.0d0) param)
         ;; Compute d value for equidistant comparison
-        (let* ((ab-norm (v2-normalize ab))
-               (qa-norm (v2-normalize qa))
-               (p2-p1 (v2- p2 p1))
-               (p2-p1-norm (v2-normalize p2-p1))
-               (p2-origin (v2- p2 origin))
-               (p2-origin-norm (v2-normalize p2-origin)))
+        (let* (;; normalize ab
+               (ab-len (sqrt (+ (* abx abx) (* aby aby))))
+               (ab-nx (if (< ab-len 1e-10) 0.0 (/ abx ab-len)))
+               (ab-ny (if (< ab-len 1e-10) 0.0 (/ aby ab-len)))
+               ;; normalize qa
+               (qa-len-f (sqrt (+ (* qax qax) (* qay qay))))
+               (qa-nx (if (< qa-len-f 1e-10) 0.0 (/ qax qa-len-f)))
+               (qa-ny (if (< qa-len-f 1e-10) 0.0 (/ qay qa-len-f)))
+               ;; p2-p1 normalized
+               (p2p1x (- p2x p1x)) (p2p1y (- p2y p1y))
+               (p2p1-len (sqrt (+ (* p2p1x p2p1x) (* p2p1y p2p1y))))
+               (p2p1-nx (if (< p2p1-len 1e-10) 0.0 (/ p2p1x p2p1-len)))
+               (p2p1-ny (if (< p2p1-len 1e-10) 0.0 (/ p2p1y p2p1-len)))
+               ;; p2-origin normalized
+               (p2ox (- p2x ox)) (p2oy (- p2y oy))
+               (p2o-len (sqrt (+ (* p2ox p2ox) (* p2oy p2oy))))
+               (p2o-nx (if (< p2o-len 1e-10) 0.0 (/ p2ox p2o-len)))
+               (p2o-ny (if (< p2o-len 1e-10) 0.0 (/ p2oy p2o-len))))
           (if (< param 0.5d0)
               (values (make-signed-distance min-distance
-                                            (abs (coerce (v2-dot ab-norm qa-norm) 'double-float)))
+                                            (abs (coerce (+ (* ab-nx qa-nx) (* ab-ny qa-ny)) 'double-float)))
                       param)
               (values (make-signed-distance min-distance
-                                            (abs (coerce (v2-dot p2-p1-norm p2-origin-norm) 'double-float)))
+                                            (abs (coerce (+ (* p2p1-nx p2o-nx) (* p2p1-ny p2o-ny)) 'double-float)))
                       param))))))
 
 (defun cubic-signed-distance (edge origin)
   "Calculate signed distance from ORIGIN to cubic Bezier edge.
    Returns (values signed-distance param)."
-  (declare (type edge-segment edge) (type vec2 origin))
+  (declare (optimize (speed 3) (safety 0))
+           (type edge-segment edge) (type vec2 origin))
   (let* ((p0 (edge-segment-p0 edge))
          (p1 (edge-segment-p1 edge))
          (p2 (edge-segment-p2 edge))
          (p3 (edge-segment-p3 edge))
-         (qa (v2- p0 origin))
-         (ab (v2- p1 p0))
+         (ox (vec2-x origin)) (oy (vec2-y origin))
+         (p0x (vec2-x p0)) (p0y (vec2-y p0))
+         (p1x (vec2-x p1)) (p1y (vec2-y p1))
+         (p2x (vec2-x p2)) (p2y (vec2-y p2))
+         (p3x (vec2-x p3)) (p3y (vec2-y p3))
+         ;; qa = p0 - origin
+         (qax (- p0x ox)) (qay (- p0y oy))
+         ;; ab = p1 - p0
+         (abx (- p1x p0x)) (aby (- p1y p0y))
          ;; br = p2 - p1 - ab = p2 - 2*p1 + p0
-         (br (vec2 (- (vec2-x p2) (vec2-x p1) (vec2-x ab))
-                   (- (vec2-y p2) (vec2-y p1) (vec2-y ab))))
+         (brx (- p2x p1x abx)) (bry (- p2y p1y aby))
          ;; as = (p3-p2) - (p2-p1) - br
-         (as-vec (vec2 (- (- (vec2-x p3) (vec2-x p2))
-                          (- (vec2-x p2) (vec2-x p1))
-                          (vec2-x br))
-                       (- (- (vec2-y p3) (vec2-y p2))
-                          (- (vec2-y p2) (vec2-y p1))
-                          (vec2-y br))))
-         ;; Direction at t=0
-         (ep-dir (edge-direction edge 0.0d0))
-         (cross-0 (coerce (v2-cross ep-dir qa) 'double-float))
-         (min-distance (* (coerce (non-zero-sign cross-0) 'double-float)
-                          (coerce (v2-length qa) 'double-float)))
-         (ep-dir-dot (v2-dot ep-dir ep-dir))
-         (param (if (zerop ep-dir-dot) 0.0d0
-                    (- (/ (coerce (v2-dot qa ep-dir) 'double-float)
-                          (coerce ep-dir-dot 'double-float))))))
-    ;; Check distance from endpoint p3
-    (let* ((p3-origin (v2- p3 origin))
-           (ep-dir-1 (edge-direction edge 1.0d0))
-           (cross-1 (coerce (v2-cross ep-dir-1 p3-origin) 'double-float))
-           (dist-1 (* (coerce (non-zero-sign cross-1) 'double-float)
-                      (coerce (v2-length p3-origin) 'double-float))))
-      (when (< (abs dist-1) (abs min-distance))
-        (setf min-distance dist-1)
-        (let* ((a-vec (vec2 (+ (vec2-x origin) (vec2-x ep-dir-1) (- (vec2-x p3)))
-                            (+ (vec2-y origin) (vec2-y ep-dir-1) (- (vec2-y p3)))))
-               (ep-dir-1-dot (v2-dot ep-dir-1 ep-dir-1)))
-          (setf param (if (zerop ep-dir-1-dot) 1.0d0
-                          (coerce (/ (v2-dot a-vec ep-dir-1) ep-dir-1-dot) 'double-float))))))
-    ;; Newton's method search from multiple starting points
-    (let ((search-starts 4))
-      (loop for i from 0 to search-starts
-            for t-init = (/ (coerce i 'double-float) search-starts)
-            do (let ((t-val t-init))
-                 (loop for step from 0 to search-starts
-                       do (let* ((qpt (edge-point edge t-val))
-                                 (qpt-origin (v2- qpt origin))
-                                 (dir (edge-direction edge t-val))
-                                 (cross-qpt (coerce (v2-cross dir qpt-origin) 'double-float))
-                                 (distance (* (coerce (non-zero-sign cross-qpt) 'double-float)
-                                              (coerce (v2-length qpt-origin) 'double-float))))
-                            (when (< (abs distance) (abs min-distance))
-                              (setf min-distance distance
-                                    param t-val))
-                            (when (= step search-starts)
-                              (return))
-                            ;; Newton step
-                            (let* ((tf (coerce t-val 'single-float))
-                                   (d1 (vec2 (+ (* 3.0 (vec2-x as-vec) tf tf)
-                                                (* 6.0 (vec2-x br) tf)
-                                                (* 3.0 (vec2-x ab)))
-                                             (+ (* 3.0 (vec2-y as-vec) tf tf)
-                                                (* 6.0 (vec2-y br) tf)
-                                                (* 3.0 (vec2-y ab)))))
-                                   (d2 (vec2 (+ (* 6.0 (vec2-x as-vec) tf)
-                                                (* 6.0 (vec2-x br)))
-                                             (+ (* 6.0 (vec2-y as-vec) tf)
-                                                (* 6.0 (vec2-y br)))))
-                                   (denom (+ (v2-dot d1 d1) (v2-dot qpt-origin d2))))
-                              (unless (zerop denom)
-                                (setf t-val (- t-val (/ (v2-dot qpt-origin d1) denom))))
-                              (when (or (< t-val 0.0d0) (> t-val 1.0d0))
-                                (return))))))))
-    ;; Return result
-    (if (and (>= param 0.0d0) (<= param 1.0d0))
-        (values (make-signed-distance min-distance 0.0d0) param)
-        ;; Compute d value
-        (let* ((d0 (v2-normalize (edge-direction edge 0.0d0)))
-               (d1 (v2-normalize (edge-direction edge 1.0d0)))
-               (qa-norm (v2-normalize qa))
-               (p3-origin (v2- p3 origin))
-               (p3-origin-norm (v2-normalize p3-origin)))
-          (if (< param 0.5d0)
-              (values (make-signed-distance min-distance
-                                            (abs (coerce (v2-dot d0 qa-norm) 'double-float)))
-                      param)
-              (values (make-signed-distance min-distance
-                                            (abs (coerce (v2-dot d1 p3-origin-norm) 'double-float)))
-                      param))))))
+         (asx (- (- p3x p2x) (- p2x p1x) brx))
+         (asy (- (- p3y p2y) (- p2y p1y) bry))
+         ;; qa-len
+         (qa-len (sqrt (+ (* qax qax) (* qay qay)))))
+    ;; Get direction at t=0 using scalar version
+    (multiple-value-bind (ep-dir-x ep-dir-y) (edge-direction-xy edge 0.0)
+    (let* ((cross-0 (coerce (- (* ep-dir-x qay) (* ep-dir-y qax)) 'double-float))
+           (min-distance (* (coerce (non-zero-sign cross-0) 'double-float)
+                            (coerce qa-len 'double-float)))
+           (ep-dir-dot (+ (* ep-dir-x ep-dir-x) (* ep-dir-y ep-dir-y)))
+           (param (if (zerop ep-dir-dot) 0.0d0
+                      (- (/ (coerce (+ (* qax ep-dir-x) (* qay ep-dir-y)) 'double-float)
+                            (coerce ep-dir-dot 'double-float))))))
+      ;; Check distance from endpoint p3
+      (let ((p3ox (- p3x ox)) (p3oy (- p3y oy)))
+        (multiple-value-bind (ed1x ed1y) (edge-direction-xy edge 1.0)
+          (let* ((cross-1 (coerce (- (* ed1x p3oy) (* ed1y p3ox)) 'double-float))
+                 (p3o-len (coerce (sqrt (+ (* p3ox p3ox) (* p3oy p3oy))) 'double-float))
+                 (dist-1 (* (coerce (non-zero-sign cross-1) 'double-float) p3o-len)))
+            (when (< (abs dist-1) (abs min-distance))
+              (setf min-distance dist-1)
+              ;; a-vec = origin + ep-dir-1 - p3
+              (let* ((avx (+ ox ed1x (- p3x)))
+                     (avy (+ oy ed1y (- p3y)))
+                     (ed1-dot (+ (* ed1x ed1x) (* ed1y ed1y))))
+                (setf param (if (zerop ed1-dot) 1.0d0
+                                (coerce (/ (+ (* avx ed1x) (* avy ed1y)) ed1-dot) 'double-float))))))))
+      ;; Newton's method search from multiple starting points
+      (let ((search-starts 4))
+        (loop for i from 0 to search-starts
+              for t-init = (/ (coerce i 'double-float) search-starts)
+              do (let ((t-val t-init))
+                   (loop for step from 0 to search-starts
+                         do (let* ((tf (coerce t-val 'single-float)))
+                              ;; Get point and direction on curve (scalar)
+                              (multiple-value-bind (qptx qpty) (edge-point-xy edge tf)
+                                (let* ((qox (- qptx ox)) (qoy (- qpty oy)))
+                                  (multiple-value-bind (dirx diry) (edge-direction-xy edge tf)
+                                    (let* ((cross-qpt (coerce (- (* dirx qoy) (* diry qox)) 'double-float))
+                                           (qo-len (coerce (sqrt (+ (* qox qox) (* qoy qoy))) 'double-float))
+                                           (distance (* (coerce (non-zero-sign cross-qpt) 'double-float) qo-len)))
+                                      (when (< (abs distance) (abs min-distance))
+                                        (setf min-distance distance
+                                              param t-val))
+                                      (when (= step search-starts)
+                                        (return))
+                                      ;; Newton step - d1 and d2 as scalar pairs
+                                      (let* ((d1x (+ (* 3.0 asx tf tf)
+                                                     (* 6.0 brx tf)
+                                                     (* 3.0 abx)))
+                                             (d1y (+ (* 3.0 asy tf tf)
+                                                     (* 6.0 bry tf)
+                                                     (* 3.0 aby)))
+                                             (d2x (+ (* 6.0 asx tf)
+                                                     (* 6.0 brx)))
+                                             (d2y (+ (* 6.0 asy tf)
+                                                     (* 6.0 bry)))
+                                             ;; denom = dot(d1,d1) + dot(qpt-origin, d2)
+                                             (denom (+ (+ (* d1x d1x) (* d1y d1y))
+                                                       (+ (* qox d2x) (* qoy d2y)))))
+                                        (unless (zerop denom)
+                                          (setf t-val (- t-val (/ (+ (* qox d1x) (* qoy d1y)) denom))))
+                                        (when (or (< t-val 0.0d0) (> t-val 1.0d0))
+                                          (return)))))))))))))
+      ;; Return result
+      (if (and (>= param 0.0d0) (<= param 1.0d0))
+          (values (make-signed-distance min-distance 0.0d0) param)
+          ;; Compute d value
+          (multiple-value-bind (d0x d0y) (edge-direction-xy edge 0.0)
+            (multiple-value-bind (d1x d1y) (edge-direction-xy edge 1.0)
+              ;; normalize d0
+              (let* ((d0-len (sqrt (+ (* d0x d0x) (* d0y d0y))))
+                     (d0-nx (if (< d0-len 1e-10) 0.0 (/ d0x d0-len)))
+                     (d0-ny (if (< d0-len 1e-10) 0.0 (/ d0y d0-len)))
+                     ;; normalize d1
+                     (d1-len (sqrt (+ (* d1x d1x) (* d1y d1y))))
+                     (d1-nx (if (< d1-len 1e-10) 0.0 (/ d1x d1-len)))
+                     (d1-ny (if (< d1-len 1e-10) 0.0 (/ d1y d1-len)))
+                     ;; normalize qa
+                     (qa-len-f (sqrt (+ (* qax qax) (* qay qay))))
+                     (qa-nx (if (< qa-len-f 1e-10) 0.0 (/ qax qa-len-f)))
+                     (qa-ny (if (< qa-len-f 1e-10) 0.0 (/ qay qa-len-f)))
+                     ;; normalize p3-origin
+                     (p3ox (- p3x ox)) (p3oy (- p3y oy))
+                     (p3o-len (sqrt (+ (* p3ox p3ox) (* p3oy p3oy))))
+                     (p3o-nx (if (< p3o-len 1e-10) 0.0 (/ p3ox p3o-len)))
+                     (p3o-ny (if (< p3o-len 1e-10) 0.0 (/ p3oy p3o-len))))
+                (if (< param 0.5d0)
+                    (values (make-signed-distance min-distance
+                                                  (abs (coerce (+ (* d0-nx qa-nx) (* d0-ny qa-ny)) 'double-float)))
+                            param)
+                    (values (make-signed-distance min-distance
+                                                  (abs (coerce (+ (* d1-nx p3o-nx) (* d1-ny p3o-ny)) 'double-float)))
+                            param)))))))))
 
 (defun edge-signed-distance (edge origin)
   "Calculate signed distance from ORIGIN to edge.
@@ -304,43 +517,61 @@
     (#.+edge-type-quadratic+ (quadratic-signed-distance edge origin))
     (#.+edge-type-cubic+ (cubic-signed-distance edge origin))))
 
-;;; Pseudo-distance correction
+;;; Pseudo-distance correction - scalar math version
 
 (defun distance-to-pseudo-distance (distance origin param edge)
   "Convert true distance to pseudo-distance at endpoints.
    This improves rendering quality at curve endpoints."
-  (declare (type signed-distance distance) (type vec2 origin)
+  (declare (optimize (speed 3) (safety 0))
+           (type signed-distance distance) (type vec2 origin)
            (type double-float param) (type edge-segment edge))
-  (cond
-    ;; Before start of edge
-    ((< param 0.0d0)
-     (let* ((dir (v2-normalize (edge-direction edge 0.0d0)))
-            (p (edge-point edge 0.0d0))
-            (aq (v2- origin p))
-            (ts (coerce (v2-dot aq dir) 'double-float)))
-       (when (< ts 0.0d0)
-         (let ((pseudo-dist (coerce (v2-cross aq dir) 'double-float)))
-           (when (<= (abs pseudo-dist) (abs (signed-distance-dist distance)))
-             (setf (signed-distance-dist distance) pseudo-dist
-                   (signed-distance-d distance) 0.0d0))))))
-    ;; After end of edge
-    ((> param 1.0d0)
-     (let* ((dir (v2-normalize (edge-direction edge 1.0d0)))
-            (p (edge-point edge 1.0d0))
-            (bq (v2- origin p))
-            (ts (coerce (v2-dot bq dir) 'double-float)))
-       (when (> ts 0.0d0)
-         (let ((pseudo-dist (coerce (v2-cross bq dir) 'double-float)))
-           (when (<= (abs pseudo-dist) (abs (signed-distance-dist distance)))
-             (setf (signed-distance-dist distance) pseudo-dist
-                   (signed-distance-d distance) 0.0d0)))))))
+  (let ((ox (vec2-x origin)) (oy (vec2-y origin)))
+    (cond
+      ;; Before start of edge
+      ((< param 0.0d0)
+       (multiple-value-bind (dirx diry) (edge-direction-xy edge 0.0)
+         (multiple-value-bind (px py) (edge-point-xy edge 0.0)
+           ;; normalize dir
+           (let* ((dir-len (sqrt (+ (* dirx dirx) (* diry diry)))))
+             (unless (< dir-len 1e-10)
+               (let* ((inv-len (/ 1.0 dir-len))
+                      (ndx (* dirx inv-len)) (ndy (* diry inv-len))
+                      ;; aq = origin - p
+                      (aqx (- ox px)) (aqy (- oy py))
+                      (ts (coerce (+ (* aqx ndx) (* aqy ndy)) 'double-float)))
+                 (when (< ts 0.0d0)
+                   (let ((pseudo-dist (coerce (- (* aqx ndy) (* aqy ndx)) 'double-float)))
+                     (when (<= (abs pseudo-dist) (abs (signed-distance-dist distance)))
+                       (setf (signed-distance-dist distance) pseudo-dist
+                             (signed-distance-d distance) 0.0d0))))))))))
+      ;; After end of edge
+      ((> param 1.0d0)
+       (multiple-value-bind (dirx diry) (edge-direction-xy edge 1.0)
+         (multiple-value-bind (px py) (edge-point-xy edge 1.0)
+           ;; normalize dir
+           (let* ((dir-len (sqrt (+ (* dirx dirx) (* diry diry)))))
+             (unless (< dir-len 1e-10)
+               (let* ((inv-len (/ 1.0 dir-len))
+                      (ndx (* dirx inv-len)) (ndy (* diry inv-len))
+                      ;; bq = origin - p
+                      (bqx (- ox px)) (bqy (- oy py))
+                      (ts (coerce (+ (* bqx ndx) (* bqy ndy)) 'double-float)))
+                 (when (> ts 0.0d0)
+                   (let ((pseudo-dist (coerce (- (* bqx ndy) (* bqy ndx)) 'double-float)))
+                     (when (<= (abs pseudo-dist) (abs (signed-distance-dist distance)))
+                       (setf (signed-distance-dist distance) pseudo-dist
+                             (signed-distance-d distance) 0.0d0))))))))))))
   distance)
 
 ;;; Distance comparison
 
+(declaim (inline signed-distance<))
+
 (defun signed-distance< (a b)
   "Compare two signed distances. Returns true if A is closer than B."
   (declare (type signed-distance a b))
-  (or (< (abs (signed-distance-dist a)) (abs (signed-distance-dist b)))
-      (and (= (abs (signed-distance-dist a)) (abs (signed-distance-dist b)))
-           (< (signed-distance-d a) (signed-distance-d b)))))
+  (let ((abs-a (abs (signed-distance-dist a)))
+        (abs-b (abs (signed-distance-dist b))))
+    (or (< abs-a abs-b)
+        (and (= abs-a abs-b)
+             (< (signed-distance-d a) (signed-distance-d b))))))

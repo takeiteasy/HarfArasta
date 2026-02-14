@@ -16,7 +16,8 @@
 
 (defun clamp (value min-val max-val)
   "Clamp VALUE to the range [MIN-VAL, MAX-VAL]."
-  (declare (type double-float value min-val max-val))
+  (declare (optimize (speed 3) (safety 0))
+           (type double-float value min-val max-val))
   (if (< value min-val)
       min-val
       (if (> value max-val)
@@ -25,7 +26,8 @@
 
 (defun clampf (value min-val max-val)
   "Clamp single-float VALUE to the range [MIN-VAL, MAX-VAL]."
-  (declare (type single-float value min-val max-val))
+  (declare (optimize (speed 3) (safety 0))
+           (type single-float value min-val max-val))
   (if (< value min-val)
       min-val
       (if (> value max-val)
@@ -65,14 +67,16 @@
 
 (defun non-zero-sign (n)
   "Return -1 or 1 based on sign of N (never 0)."
-  (declare (type double-float n))
+  (declare (optimize (speed 3) (safety 0))
+           (type double-float n))
   (if (> n 0.0d0) 1 -1))
 
 (declaim (inline median))
 
 (defun median (a b c)
   "Return the median of three values."
-  (declare (type double-float a b c))
+  (declare (optimize (speed 3) (safety 0))
+           (type double-float a b c))
   (max (min a b) (min (max a b) c)))
 
 ;;; Vec2 operations
@@ -81,13 +85,15 @@
 
 (defun v2+ (a b)
   "Add two vec2s."
-  (declare (type vec2 a b))
+  (declare (optimize (speed 3) (safety 0))
+           (type vec2 a b))
   (vec2 (+ (vec2-x a) (vec2-x b))
         (+ (vec2-y a) (vec2-y b))))
 
 (defun v2- (a b)
   "Subtract vec2 B from A."
-  (declare (type vec2 a b))
+  (declare (optimize (speed 3) (safety 0))
+           (type vec2 a b))
   (vec2 (- (vec2-x a) (vec2-x b))
         (- (vec2-y a) (vec2-y b))))
 
@@ -105,25 +111,29 @@
 
 (defun v2-dot (a b)
   "Dot product of two vec2s."
-  (declare (type vec2 a b))
+  (declare (optimize (speed 3) (safety 0))
+           (type vec2 a b))
   (+ (* (vec2-x a) (vec2-x b))
      (* (vec2-y a) (vec2-y b))))
 
 (defun v2-cross (a b)
   "2D cross product (returns scalar)."
-  (declare (type vec2 a b))
+  (declare (optimize (speed 3) (safety 0))
+           (type vec2 a b))
   (- (* (vec2-x a) (vec2-y b))
      (* (vec2-y a) (vec2-x b))))
 
 (defun v2-length-squared (v)
   "Squared length of vec2."
-  (declare (type vec2 v))
+  (declare (optimize (speed 3) (safety 0))
+           (type vec2 v))
   (+ (* (vec2-x v) (vec2-x v))
      (* (vec2-y v) (vec2-y v))))
 
 (defun v2-length (v)
   "Length of vec2."
-  (declare (type vec2 v))
+  (declare (optimize (speed 3) (safety 0))
+           (type vec2 v))
   (sqrt (v2-length-squared v)))
 
 (defun v2-normalize (v)
@@ -138,7 +148,8 @@
 
 (defun v2-mix (a b weight)
   "Linear interpolation between vec2s A and B."
-  (declare (type vec2 a b) (type single-float weight))
+  (declare (optimize (speed 3) (safety 0))
+           (type vec2 a b) (type single-float weight))
   (let ((w1 (- 1.0 weight)))
     (vec2 (+ (* w1 (vec2-x a)) (* weight (vec2-x b)))
           (+ (* w1 (vec2-y a)) (* weight (vec2-y b))))))

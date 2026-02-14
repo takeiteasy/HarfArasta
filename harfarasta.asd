@@ -34,8 +34,8 @@
                (:file "delaunay")
                (:file "edge-coloring")
                (:file "math")
-               (:file "msdf")
                (:file "distance")
+               (:file "msdf")
                (:file "utils")
                (:file "harfarasta")))
 

@@ -23,6 +23,9 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 ### TODO
 
 - [ ] Add depth option for mesh generation
+- [ ] Load and identify fonts from memory
+- [ ] Extend export for atlas generation (like font stash)
+- [ ] Clean up subprojects (harfbuzz, woff2)
 
 ## Quickstart
 

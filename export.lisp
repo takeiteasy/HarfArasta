@@ -24,15 +24,18 @@ COLOR is an (r g b) list with values 0-255."
          (scale (/ (coerce pixel-height 'double-float)
                    (coerce upem 'double-float)))
          ;; Collect per-glyph shapes and positions
+         (shape-cache (make-hash-table))
          (glyph-data
            (let ((cursor-x 0))
              (loop for sg in glyphs
                    for gid = (rich-text:shaped-glyph-glyph-id sg)
                    for pen-x = (+ cursor-x (rich-text:shaped-glyph-x-offset sg))
-                   for shape = (rich-text:glyph-to-shape font gid)
+                   for shape = (or (gethash gid shape-cache)
+                                   (setf (gethash gid shape-cache)
+                                         (rich-text:glyph-to-shape font gid)))
                    do (incf cursor-x (rich-text:shaped-glyph-x-advance sg))
                    when shape
-                     collect (list pen-x shape))))
+                     collect (list pen-x shape gid))))
          ;; Compute visual bounding box from actual glyph shapes
          (padding 1.0)
          (advance-width (ceiling (* (loop for g in glyphs
@@ -68,10 +71,12 @@ COLOR is an (r g b) list with values 0-255."
            (image (zpng:data-array png))
            (cr (first color))
            (cg (second color))
-           (cb (third color)))
+           (cb (third color))
+           (sdf-cache (make-hash-table :test 'equal)))
       (dolist (entry glyph-data)
         (let* ((pen-x-fu (first entry))   ; font units
                (shape (second entry))
+               (gid (third entry))
                (pen-x-px (+ (round (* pen-x-fu scale)) x-offset)))
           ;; Get shape bounds in font units
           (multiple-value-bind (min-x min-y max-x max-y)
@@ -99,10 +104,13 @@ COLOR is an (r g b) list with values 0-255."
               (when (and (> gw 0) (> gh 0)
                          (< gx0 canvas-width) (< gy0 canvas-height)
                          (> gx1 0) (> gy1 0))
-                (let* ((sdf (harfarasta::generate-sdf-from-shape
-                             shape gw gh
-                             :range sdf-range :scale sdf-scale
-                             :translate-x sdf-tx :translate-y sdf-ty))
+                (let* ((cache-key (list gid gw gh))
+                       (sdf (or (gethash cache-key sdf-cache)
+                                (setf (gethash cache-key sdf-cache)
+                                      (harfarasta::generate-sdf-from-shape
+                                       shape gw gh
+                                       :range sdf-range :scale sdf-scale
+                                       :translate-x sdf-tx :translate-y sdf-ty))))
                        (sdf-data (harfarasta::bitmap-data sdf))
                        ;; Smoothstep width: ~1px of anti-aliasing in SDF space
                        (edge-w (coerce (/ 0.5d0 (* sdf-scale sdf-range)) 'single-float)))

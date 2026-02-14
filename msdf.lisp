@@ -84,7 +84,7 @@
 
   (let* ((out (or output (make-bitmap width height 3)))
          (out-data (bitmap-data out))
-         (contours (shape-contours shape))
+         (contours (coerce (shape-contours shape) 'vector))
          (contour-count (length contours))
          (inv-range (/ 1.0d0 range))
          ;; Pre-allocate per-contour distance storage
@@ -118,7 +118,7 @@
 
                         ;; Process each contour
                         (loop for j from 0 below contour-count
-                              for contour = (nth j contours)
+                              for contour = (aref contours j)
                               for contour-winding = (contour-winding contour)
                               do
                                  ;; Per-contour tracking
@@ -238,7 +238,7 @@
                              (setf (multi-distance-med msd) +negative-infinity+
                                    winding 1)
                              (loop for i from 0 below contour-count
-                                   for contour = (nth i contours)
+                                   for contour = (aref contours i)
                                    for csd = (aref contour-sd i)
                                    when (and (> (contour-winding contour) 0)
                                              (> (multi-distance-med csd) (multi-distance-med msd))
@@ -253,7 +253,7 @@
                              (setf (multi-distance-med msd) +infinity+
                                    winding -1)
                              (loop for i from 0 below contour-count
-                                   for contour = (nth i contours)
+                                   for contour = (aref contours i)
                                    for csd = (aref contour-sd i)
                                    when (and (< (contour-winding contour) 0)
                                              (< (multi-distance-med csd) (multi-distance-med msd))
@@ -265,7 +265,7 @@
 
                           ;; Check for opposite winding contours
                           (loop for i from 0 below contour-count
-                                for contour = (nth i contours)
+                                for contour = (aref contours i)
                                 for csd = (aref contour-sd i)
                                 when (and (/= (contour-winding contour) winding)
                                           (< (abs (multi-distance-med csd)) (abs (multi-distance-med msd))))
@@ -361,30 +361,34 @@
 ;;; The total angle divided by 2π gives the winding number.
 
 (defun %shape-winding-at (shape px py)
-  "Compute the winding number at point (PX,PY) for SHAPE using angle summation.
-   Subdivides each edge into linear segments and sums the signed angles.
+  "Compute the winding number at point (PX,PY) for SHAPE using horizontal ray casting.
+   Casts a ray from (PX,PY) in the +X direction, counts signed edge crossings.
    Non-zero result means the point is inside the shape (non-zero fill rule)."
-  (declare (type shape shape) (type single-float px py))
-  (let ((total-angle 0.0d0)
-        (n-subdivs 8))
+  (declare (optimize (speed 3) (safety 0))
+           (type shape shape) (type single-float px py))
+  (let ((crossings 0)
+        (n-subdivs 8)
+        (inv-n (/ 1.0 8.0)))
+    (declare (type fixnum crossings n-subdivs))
     (dolist (contour (shape-contours shape))
       (dolist (edge (contour-edges contour))
-        ;; Get start point of edge
-        (let* ((p0 (edge-point edge 0.0d0))
-               (prev-dx (coerce (- (vec2-x p0) px) 'double-float))
-               (prev-dy (coerce (- (vec2-y p0) py) 'double-float)))
-          ;; Subdivide edge and sum angles between consecutive sample points
-          (loop for i from 1 to n-subdivs
-                for t-val double-float = (/ (coerce i 'double-float) n-subdivs)
-                for pt = (edge-point edge t-val)
-                for dx double-float = (coerce (- (vec2-x pt) px) 'double-float)
-                for dy double-float = (coerce (- (vec2-y pt) py) 'double-float)
-                for cross double-float = (- (* prev-dx dy) (* prev-dy dx))
-                for dot double-float = (+ (* prev-dx dx) (* prev-dy dy))
-                do (incf total-angle (atan cross dot))
-                   (setf prev-dx dx
-                         prev-dy dy)))))
-    (round total-angle (* 2.0d0 pi))))
+        ;; Get start point of edge as scalars
+        (multiple-value-bind (prev-x prev-y) (edge-point-xy edge 0.0)
+          ;; Subdivide edge and count ray crossings
+          (loop for i fixnum from 1 to n-subdivs
+                for t-val single-float = (* (coerce i 'single-float) inv-n)
+                do (multiple-value-bind (ex ey) (edge-point-xy edge t-val)
+                     (when (or (and (<= prev-y py) (> ey py))
+                               (and (> prev-y py) (<= ey py)))
+                       ;; Compute x-intersection via linear interpolation
+                       (let* ((frac (/ (- py prev-y) (- ey prev-y)))
+                              (ix (+ prev-x (* frac (- ex prev-x)))))
+                         (when (> ix px)
+                           (if (< prev-y ey)
+                               (incf crossings)
+                               (decf crossings)))))
+                     (setf prev-x ex prev-y ey))))))
+    crossings))
 
 ;;; SDF generation
 
@@ -403,7 +407,8 @@
    - Values < 0.5 = inside the shape
    - 0.5 = on the edge
    - Values > 0.5 = outside the shape."
-  (declare (type shape shape)
+  (declare (optimize (speed 3) (safety 1))
+           (type shape shape)
            (type fixnum width height)
            (type double-float range scale translate-x translate-y))
 
@@ -414,39 +419,53 @@
          (out-data (bitmap-data out))
          (inv-range (/ 1.0d0 range)))
 
-    ;; Process each pixel
-    (loop for y from 0 below height
-          do (loop for x from 0 below width
-                   ;; Convert pixel to shape coordinates (same convention as MSDF)
-                   for px = (coerce (/ (+ x 0.5d0 translate-x) scale) 'single-float)
-                   for py = (coerce (/ (+ y 0.5d0 translate-y) scale) 'single-float)
-                   for p = (vec2 px py)
-                   do (let ((min-dist (make-signed-distance +negative-infinity+ 1.0d0))
-                            (nearest-edge nil)
-                            (nearest-param 0.0d0))
-                        ;; Find the nearest edge across ALL contours
-                        (dolist (contour (shape-contours shape))
-                          (dolist (edge (contour-edges contour))
-                            (multiple-value-bind (dist param)
-                                (edge-signed-distance edge p)
-                              (when (signed-distance< dist min-dist)
-                                (setf min-dist dist
-                                      nearest-edge edge
-                                      nearest-param param)))))
-                        ;; Pseudo-distance correction for smooth corners
-                        (when nearest-edge
-                          (distance-to-pseudo-distance min-dist p
-                                                       nearest-param nearest-edge))
-                        (let* ((abs-dist (abs (signed-distance-dist min-dist)))
-                               ;; Use winding number to determine inside/outside
-                               (winding (%shape-winding-at shape px py))
-                               ;; Inside (winding != 0): positive distance → SDF < 0.5
-                               ;; Outside (winding == 0): negative distance → SDF > 0.5
-                               (signed-dist (if (not (zerop winding))
-                                                abs-dist
-                                                (- abs-dist))))
-                          (setf (aref out-data (+ x (* y width)))
-                                (clampf (coerce (- 0.5d0 (* signed-dist inv-range))
-                                                'single-float)
-                                        0.0 1.0))))))
+    ;; Pre-allocate a reusable signed-distance for pseudo-distance correction
+    (let ((pseudo-sd (make-signed-distance 0.0d0 0.0d0))
+          (p (vec2 0.0 0.0)))
+      ;; Process each pixel
+      (loop for y from 0 below height
+            do (loop for x from 0 below width
+                     ;; Convert pixel to shape coordinates (same convention as MSDF)
+                     for px = (coerce (/ (+ x 0.5d0 translate-x) scale) 'single-float)
+                     for py = (coerce (/ (+ y 0.5d0 translate-y) scale) 'single-float)
+                     do ;; Reuse vec2 for pseudo-distance (which needs it)
+                        (setf (vec2-x p) px (vec2-y p) py)
+                        (let ((min-dist-val +negative-infinity+)
+                              (min-dist-d 1.0d0)
+                              (nearest-edge nil)
+                              (nearest-param 0.0d0))
+                          (declare (type double-float min-dist-val min-dist-d nearest-param))
+                          ;; Find the nearest edge across ALL contours
+                          (dolist (contour (shape-contours shape))
+                            (dolist (edge (contour-edges contour))
+                              (multiple-value-bind (dist param)
+                                  (edge-signed-distance edge p)
+                                (let ((abs-dist (abs (signed-distance-dist dist)))
+                                      (abs-min (abs min-dist-val)))
+                                  (when (or (< abs-dist abs-min)
+                                            (and (= abs-dist abs-min)
+                                                 (< (signed-distance-d dist) min-dist-d)))
+                                    (setf min-dist-val (signed-distance-dist dist)
+                                          min-dist-d (signed-distance-d dist)
+                                          nearest-edge edge
+                                          nearest-param param))))))
+                          ;; Pseudo-distance correction for smooth corners
+                          (when nearest-edge
+                            (setf (signed-distance-dist pseudo-sd) min-dist-val
+                                  (signed-distance-d pseudo-sd) min-dist-d)
+                            (distance-to-pseudo-distance pseudo-sd p
+                                                         nearest-param nearest-edge)
+                            (setf min-dist-val (signed-distance-dist pseudo-sd)))
+                          (let* ((abs-dist (abs min-dist-val))
+                                 ;; Use winding number to determine inside/outside
+                                 (winding (%shape-winding-at shape px py))
+                                 ;; Inside (winding != 0): positive distance → SDF < 0.5
+                                 ;; Outside (winding == 0): negative distance → SDF > 0.5
+                                 (signed-dist (if (not (zerop winding))
+                                                  abs-dist
+                                                  (- abs-dist))))
+                            (setf (aref out-data (+ x (* y width)))
+                                  (clampf (coerce (- 0.5d0 (* signed-dist inv-range))
+                                                  'single-float)
+                                          0.0 1.0)))))))
     out))
