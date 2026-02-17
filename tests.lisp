@@ -6,7 +6,7 @@
 
 (in-package #:harfarasta/tests)
 
-(defun render-tests (&key (output-dir (asdf:system-relative-pathname :harfarasta "export-tests/"))
+(defun render-tests (&key (output-dir (asdf:system-relative-pathname :harfarasta "tests/"))
                           font-path)
   "Run a suite of export tests, writing results to OUTPUT-DIR.
 Uses FONT-PATH if given, otherwise discovers Arial."
@@ -35,19 +35,21 @@ Uses FONT-PATH if given, otherwise discovers Arial."
                            :as :png :font-path path :size 48
                            :color '(0 200 0)))
 
-      (format t "4. PNG: 'harfarasta' blue, 96px~%")
-      (time (render-string "harfarasta" (out "harfarasta-blue-96.png")
+      (format t "4. PNG: multiline 'harfarasta / renders / great' blue, centered, 96px~%")
+      (time (render-string (format nil "harfarasta~%renders~%great") (out "harfarasta-blue-96.png")
                            :as :png :font-path path :size 96
+                           :alignment :center
                            :color '(80 140 255)))
+
       ;; OBJ tests
       (format t "5. OBJ: 'Hi' mesh, size 1.0~%")
       (time (render-string "Hi" (out "hi.obj")
                            :as :obj :font-path path :size 1.0))
 
-      (format t "6. OBJ: 'HarfArasta' extruded mesh, size 0.5, depth 0.1~%")
-      (time (render-string "HarfArasta (آراسته)" (out "harfarasta.obj")
-                           :as :obj :font-path path :size 0.5 :depth 0.1))
-
+      (time (rich-text:with-font (f (rich-text:find-font-path :family "Arial"))
+              (render-string "HarfArasta (آراسته)" (out "harfarasta.obj")
+                             :as :obj :font-path path :size 0.5 :depth 0.01
+                             :fallback-fonts (list f))))
       ;; Fontstash test
       (format t "7. Fontstash: atlas of 'ABCabc123' glyphs, SDF mode~%")
       (time

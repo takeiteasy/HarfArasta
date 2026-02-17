@@ -22,7 +22,10 @@
    #:shaped-glyph-y-advance
    #:shaped-glyph-x-offset
    #:shaped-glyph-y-offset
+   #:shaped-glyph-font
+   #:shaped-glyph-skip
    #:shape-text
+   #:shape-text-lines
    #:text-to-meshes
    #:text-to-sdfs
    #:text-to-msdfs
@@ -40,6 +43,13 @@
    ;; Shape utilities
    #:shape-bounds
    #:auto-scale-shape
+   ;; Font inspection
+   #:font-has-char-p
+   #:font-missing-chars
+   #:font-monospace-p
+   ;; Fallback fonts
+   #:*fallback-fonts*
+   #:with-fallback-fonts
    ;; Persistent font management
    #:create-font
    #:create-font-from-bytes

@@ -27,6 +27,7 @@
    #:hb-blob-create-from-file
    #:hb-blob-destroy
    #:hb-blob-get-length
+   #:hb-blob-get-data
 
    ;; Face
    #:hb-face-create
@@ -34,6 +35,7 @@
    #:hb-face-get-glyph-count
    #:hb-face-get-upem
    #:hb-face-reference
+   #:hb-face-reference-table
 
    ;; Font
    #:hb-font-create
@@ -43,6 +45,9 @@
    #:hb-font-set-ppem
    #:hb-font-get-ppem
    #:hb-font-reference
+   #:hb-font-get-nominal-glyph
+   #:hb-font-get-glyph-h-advance
+   #:hb-font-get-face
 
    ;; Buffer
    #:hb-buffer-create
@@ -212,6 +217,10 @@
 (defcfun ("hb_blob_get_length" hb-blob-get-length) :uint
   (blob hb-blob))
 
+(defcfun ("hb_blob_get_data" hb-blob-get-data) :pointer
+  (blob hb-blob)
+  (length :pointer))
+
 ;;; ——— Face functions ———
 
 (defcfun ("hb_face_create" hb-face-create) hb-face
@@ -229,6 +238,10 @@
 
 (defcfun ("hb_face_reference" hb-face-reference) hb-face
   (face hb-face))
+
+(defcfun ("hb_face_reference_table" hb-face-reference-table) hb-blob
+  (face hb-face)
+  (tag :uint32))
 
 ;;; ——— Font functions ———
 
@@ -259,6 +272,18 @@
   (y-ppem :pointer))
 
 (defcfun ("hb_font_reference" hb-font-reference) hb-font
+  (font hb-font))
+
+(defcfun ("hb_font_get_nominal_glyph" hb-font-get-nominal-glyph) :int
+  (font hb-font)
+  (unicode :uint32)
+  (glyph-out :pointer))
+
+(defcfun ("hb_font_get_glyph_h_advance" hb-font-get-glyph-h-advance) :int32
+  (font hb-font)
+  (glyph :uint32))
+
+(defcfun ("hb_font_get_face" hb-font-get-face) hb-face
   (font hb-font))
 
 ;;; ——— Buffer functions ———

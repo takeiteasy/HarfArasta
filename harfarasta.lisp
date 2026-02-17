@@ -482,116 +482,306 @@ Returns (VALUES vertices indices) — see SHAPE-TO-MESH for details."
   (x-advance 0 :type fixnum)
   (y-advance 0 :type fixnum)
   (x-offset 0 :type fixnum)
-  (y-offset 0 :type fixnum))
+  (y-offset 0 :type fixnum)
+  (font nil)                     ; NIL = use primary font
+  (skip nil))                    ; T = synthetic layout glyph; advance cursor but don't render
 
-(defun shape-text (font text &key direction script language)
+;;;; ——— Fallback font state ———
+
+(defvar *fallback-fonts* nil
+  "List of hb_font_t pointers tried in order when a glyph is missing.
+Off by default (NIL). Users manage font lifecycle via create-font/destroy-font.")
+
+(defmacro with-fallback-fonts (fonts &body body)
+  "Bind *FALLBACK-FONTS* to FONTS for the duration of BODY."
+  `(let ((*fallback-fonts* ,fonts)) ,@body))
+
+;;;; ——— Font inspection ———
+
+(defun font-has-char-p (font char-or-codepoint)
+  "Return T if FONT contains a glyph for CHAR-OR-CODEPOINT (character or integer codepoint)."
+  (let ((cp (etypecase char-or-codepoint
+               (character (char-code char-or-codepoint))
+               (integer char-or-codepoint))))
+    (cffi:with-foreign-object (gid :uint32)
+      (not (zerop (hb:hb-font-get-nominal-glyph font cp gid))))))
+
+(defun font-missing-chars (font string)
+  "Return a list of characters in STRING that FONT does not have glyphs for."
+  (loop for ch across string
+        unless (font-has-char-p font ch)
+          collect ch))
+
+(defun font-monospace-p (font)
+  "Return T if FONT is monospaced, as indicated by the OpenType 'post' table isFixedPitch field."
+  (let* ((face (hb:hb-font-get-face font))
+         (blob (hb:hb-face-reference-table face (hb:hb-tag #\p #\o #\s #\t))))
+    (unwind-protect
+         (cffi:with-foreign-object (len :uint)
+           (let* ((data (hb:hb-blob-get-data blob len))
+                  (n    (cffi:mem-ref len :uint)))
+             (when (>= n 16)
+               (not (zerop (logior (ash (cffi:mem-aref data :uint8 12) 24)
+                                   (ash (cffi:mem-aref data :uint8 13) 16)
+                                   (ash (cffi:mem-aref data :uint8 14)  8)
+                                        (cffi:mem-aref data :uint8 15)))))))
+      (hb:hb-blob-destroy blob))))
+
+;;;; ——— Fallback font helpers ———
+
+(defun %utf8-char-byte-length (ch)
+  "Return the number of UTF-8 bytes needed to encode character CH."
+  (let ((cp (char-code ch)))
+    (cond ((< cp #x80)    1)
+          ((< cp #x800)   2)
+          ((< cp #x10000) 3)
+          (t              4))))
+
+(defun %cluster-codepoint-map (text)
+  "Build a hash-table mapping UTF-8 byte offsets (cluster values) to codepoints."
+  (let ((table (make-hash-table :test 'eql))
+        (byte-offset 0))
+    (loop for ch across text
+          do (setf (gethash byte-offset table) (char-code ch))
+             (incf byte-offset (%utf8-char-byte-length ch)))
+    table))
+
+(defun %apply-fallback-fonts (shaped-glyphs text fallback-fonts)
+  "For each shaped-glyph with glyph-id=0, search FALLBACK-FONTS for a replacement.
+Returns a new list; unresolved glyphs are left with glyph-id=0."
+  (let ((cluster-map (%cluster-codepoint-map text)))
+    (mapcar
+     (lambda (sg)
+       (if (zerop (shaped-glyph-glyph-id sg))
+           (let* ((cp (gethash (shaped-glyph-cluster sg) cluster-map))
+                  found-font
+                  (found-gid 0))
+             (when cp
+               (dolist (fb fallback-fonts)
+                 (cffi:with-foreign-object (gid-out :uint32)
+                   (when (not (zerop (hb:hb-font-get-nominal-glyph fb cp gid-out)))
+                     (setf found-font fb
+                           found-gid (cffi:mem-ref gid-out :uint32))
+                     (return)))))
+             (if found-font
+                 (make-shaped-glyph
+                  :glyph-id found-gid
+                  :cluster  (shaped-glyph-cluster sg)
+                  :x-advance (hb:hb-font-get-glyph-h-advance found-font found-gid)
+                  :y-advance (shaped-glyph-y-advance sg)
+                  :x-offset  (shaped-glyph-x-offset sg)
+                  :y-offset  (shaped-glyph-y-offset sg)
+                  :font      found-font)
+                 sg))
+           sg))
+     shaped-glyphs)))
+
+;;;; ——— Multiline helpers ———
+
+(defun %split-lines (text)
+  "Split TEXT on #\\Newline. Returns list of strings (empty string for blank lines)."
+  (loop for start = 0 then (1+ pos)
+        for pos   = (position #\Newline text :start start)
+        collect (subseq text start (or pos (length text)))
+        while pos))
+
+(defun %get-font-upem (font)
+  "Return the units-per-em of FONT."
+  (hb:hb-face-get-upem (hb:hb-font-get-face font)))
+
+(defun shape-text (font text &key direction script language
+                               alignment line-height
+                               (fallback-fonts *fallback-fonts*))
   "Shape TEXT using FONT via HarfBuzz. Returns a list of shaped-glyph structs.
 DIRECTION is a keyword (:ltr :rtl :ttb :btt) or NIL for auto-detection.
 SCRIPT is a 4-char tag string (e.g. \"Latn\") or NIL.
 LANGUAGE is a BCP-47 string (e.g. \"en\") or NIL.
-Unset properties are guessed by hb_buffer_guess_segment_properties."
-  (let ((buf (hb:hb-buffer-create)))
-    (unwind-protect
-         (progn
-           (hb:hb-buffer-add-utf8 buf text -1 0 -1)
-           (when direction
-             (hb:hb-buffer-set-direction buf direction))
-           (when script
-             (hb:hb-buffer-set-script
-              buf (hb:hb-script-from-tag script)))
-           (when language
-             (hb:hb-buffer-set-language
-              buf (hb:hb-language-from-string language -1)))
-           (hb:hb-buffer-guess-segment-properties buf)
-           (hb:hb-shape font buf (cffi:null-pointer) 0)
-           (cffi:with-foreign-object (len :uint)
-             (let ((infos (hb:hb-buffer-get-glyph-infos buf len))
-                   (count (cffi:mem-ref len :uint)))
-               (let ((positions (hb:hb-buffer-get-glyph-positions buf len)))
-                 (loop for i from 0 below count
-                       for info = (cffi:mem-aptr infos
-                                                 '(:struct hb:hb-glyph-info-t) i)
-                       for pos = (cffi:mem-aptr positions
-                                                '(:struct hb:hb-glyph-position-t) i)
-                       collect (make-shaped-glyph
-                                :glyph-id (cffi:foreign-slot-value
-                                           info '(:struct hb:hb-glyph-info-t)
-                                           'hb::codepoint)
-                                :cluster (cffi:foreign-slot-value
-                                          info '(:struct hb:hb-glyph-info-t)
-                                          'hb::cluster)
-                                :x-advance (cffi:foreign-slot-value
-                                            pos '(:struct hb:hb-glyph-position-t)
-                                            'hb::x-advance)
-                                :y-advance (cffi:foreign-slot-value
-                                            pos '(:struct hb:hb-glyph-position-t)
-                                            'hb::y-advance)
-                                :x-offset (cffi:foreign-slot-value
-                                           pos '(:struct hb:hb-glyph-position-t)
-                                           'hb::x-offset)
-                                :y-offset (cffi:foreign-slot-value
-                                           pos '(:struct hb:hb-glyph-position-t)
-                                           'hb::y-offset)))))))
-      (hb:hb-buffer-destroy buf))))
+ALIGNMENT is :left (default), :center, or :right for multi-line layout.
+LINE-HEIGHT is the Y distance between lines in font units (default = upem).
+FALLBACK-FONTS is a list of hb_font_t pointers tried for missing glyphs.
+Unset properties are guessed by hb_buffer_guess_segment_properties.
+For multi-line TEXT (containing #\\Newline), returns a flat list that includes
+synthetic skip glyphs encoding cursor jumps; consumers use %map-shaped-glyphs."
+  (if (find #\Newline text)
+      ;; Multiline path: split, shape each line, build flat list with skip glyphs
+      (let* ((lines (%split-lines text))
+             (lh (or line-height (%get-font-upem font)))
+             (lines-glyphs (mapcar (lambda (line)
+                                     (if (string= line "")
+                                         nil
+                                         (shape-text font line
+                                                     :direction direction
+                                                     :script script
+                                                     :language language
+                                                     :fallback-fonts fallback-fonts)))
+                                   lines))
+             (line-widths (mapcar (lambda (glyphs)
+                                    (reduce #'+ glyphs
+                                            :key #'shaped-glyph-x-advance
+                                            :initial-value 0))
+                                  lines-glyphs))
+             (max-width (reduce #'max line-widths :initial-value 0))
+             (result '())
+             (prev-end-x 0))
+        (loop for glyphs in lines-glyphs
+              for lw in line-widths
+              for line-idx from 0
+              for start-x = (ecase (or alignment :left)
+                               (:left   0)
+                               (:center (floor (- max-width lw) 2))
+                               (:right  (- max-width lw)))
+              ;; Skip glyph: advance cursor to start of this line
+              do (push (make-shaped-glyph
+                        :x-advance (- start-x prev-end-x)
+                        :y-advance (if (zerop line-idx) 0 lh)
+                        :skip t)
+                       result)
+                 (dolist (sg glyphs) (push sg result))
+                 (setf prev-end-x (+ start-x lw)))
+        (nreverse result))
+      ;; Single-line path: HarfBuzz shaping (unchanged)
+      (let ((buf (hb:hb-buffer-create)))
+        (unwind-protect
+             (progn
+               (hb:hb-buffer-add-utf8 buf text -1 0 -1)
+               (when direction
+                 (hb:hb-buffer-set-direction buf direction))
+               (when script
+                 (hb:hb-buffer-set-script
+                  buf (hb:hb-script-from-tag script)))
+               (when language
+                 (hb:hb-buffer-set-language
+                  buf (hb:hb-language-from-string language -1)))
+               (hb:hb-buffer-guess-segment-properties buf)
+               (hb:hb-shape font buf (cffi:null-pointer) 0)
+               (let ((result
+                       (cffi:with-foreign-object (len :uint)
+                         (let ((infos (hb:hb-buffer-get-glyph-infos buf len))
+                               (count (cffi:mem-ref len :uint)))
+                           (let ((positions (hb:hb-buffer-get-glyph-positions buf len)))
+                             (loop for i from 0 below count
+                                   for info = (cffi:mem-aptr infos
+                                                             '(:struct hb:hb-glyph-info-t) i)
+                                   for pos = (cffi:mem-aptr positions
+                                                            '(:struct hb:hb-glyph-position-t) i)
+                                   collect (make-shaped-glyph
+                                            :glyph-id (cffi:foreign-slot-value
+                                                       info '(:struct hb:hb-glyph-info-t)
+                                                       'hb::codepoint)
+                                            :cluster (cffi:foreign-slot-value
+                                                      info '(:struct hb:hb-glyph-info-t)
+                                                      'hb::cluster)
+                                            :x-advance (cffi:foreign-slot-value
+                                                        pos '(:struct hb:hb-glyph-position-t)
+                                                        'hb::x-advance)
+                                            :y-advance (cffi:foreign-slot-value
+                                                        pos '(:struct hb:hb-glyph-position-t)
+                                                        'hb::y-advance)
+                                            :x-offset (cffi:foreign-slot-value
+                                                       pos '(:struct hb:hb-glyph-position-t)
+                                                       'hb::x-offset)
+                                            :y-offset (cffi:foreign-slot-value
+                                                       pos '(:struct hb:hb-glyph-position-t)
+                                                       'hb::y-offset))))))))
+                 (if fallback-fonts
+                     (%apply-fallback-fonts result text fallback-fonts)
+                     result)))
+          (hb:hb-buffer-destroy buf)))))
 
-(defun %map-shaped-glyphs (shaped-glyphs render-fn)
+(defun %map-shaped-glyphs (shaped-glyphs primary-font render-fn
+                           &key (start-x 0) (start-y 0))
   "Walk SHAPED-GLYPHS accumulating cursor position, calling RENDER-FN for each glyph.
-RENDER-FN receives (font-not-needed glyph-id) and should return render data or NIL.
+RENDER-FN receives (glyph-id font) where FONT is the glyph's fallback font or PRIMARY-FONT.
 Returns a list of (pen-x pen-y . render-data) for non-NIL results."
-  (let ((cursor-x 0)
-        (cursor-y 0)
+  (let ((cursor-x start-x)
+        (cursor-y start-y)
         (results nil))
     (dolist (sg shaped-glyphs)
       (let ((pen-x (+ cursor-x (shaped-glyph-x-offset sg)))
-            (pen-y (+ cursor-y (shaped-glyph-y-offset sg))))
-        (let ((data (funcall render-fn (shaped-glyph-glyph-id sg))))
-          (when data
-            (push (list* pen-x pen-y data) results))))
+            (pen-y (+ cursor-y (shaped-glyph-y-offset sg)))
+            (font  (or (shaped-glyph-font sg) primary-font)))
+        (unless (shaped-glyph-skip sg)
+          (let ((data (funcall render-fn (shaped-glyph-glyph-id sg) font)))
+            (when data
+              (push (list* pen-x pen-y data) results)))))
       (incf cursor-x (shaped-glyph-x-advance sg))
       (incf cursor-y (shaped-glyph-y-advance sg)))
     (nreverse results)))
 
-(defun text-to-meshes (font text &key direction script language (segments-per-edge 8) depth)
+(defun %map-shaped-glyphs-multiline (lines primary-font render-fn alignment line-height)
+  "Layout LINES (list of shaped-glyph lists) with ALIGNMENT and stacked by LINE-HEIGHT.
+Calls RENDER-FN as per %MAP-SHAPED-GLYPHS. Returns combined result list."
+  (let* ((line-widths (mapcar (lambda (line)
+                                (reduce #'+ line :key #'shaped-glyph-x-advance
+                                                  :initial-value 0))
+                              lines))
+         (max-width (reduce #'max line-widths :initial-value 0))
+         (current-y 0)
+         (results nil))
+    (loop for line in lines
+          for lw  in line-widths
+          for start-x = (ecase (or alignment :left)
+                          (:left   0)
+                          (:center (floor (- max-width lw) 2))
+                          (:right  (- max-width lw)))
+          do (setf results
+                   (nconc results
+                          (%map-shaped-glyphs line primary-font render-fn
+                                              :start-x start-x
+                                              :start-y current-y)))
+             (incf current-y line-height))
+    results))
+
+(defun text-to-meshes (font text &key direction script language (segments-per-edge 8) depth
+                                     alignment line-height (fallback-fonts *fallback-fonts*))
   "Shape TEXT and triangulate each visible glyph into a positioned mesh.
-Returns a list of (x y vertices indices). See SHAPE-TO-MESH for array formats."
-  (let ((glyphs (shape-text font text :direction direction
-                                       :script script :language language)))
-    (%map-shaped-glyphs
-     glyphs
-     (lambda (glyph-id)
-       (let ((shape (glyph-to-shape font glyph-id)))
-         (when shape
-           (multiple-value-bind (vertices indices)
-               (shape-to-mesh shape :segments-per-edge segments-per-edge :depth depth)
-             (list vertices indices))))))))
+Returns a list of (x y vertices indices). See SHAPE-TO-MESH for array formats.
+Supports multi-line via #\\Newline and :alignment (:left/:center/:right) / :line-height."
+  (flet ((render (glyph-id font)
+           (let ((shape (glyph-to-shape font glyph-id)))
+             (when shape
+               (multiple-value-bind (vertices indices)
+                   (shape-to-mesh shape :segments-per-edge segments-per-edge :depth depth)
+                 (list vertices indices))))))
+    (let ((glyphs (shape-text font text
+                               :direction direction :script script :language language
+                               :alignment alignment :line-height line-height
+                               :fallback-fonts fallback-fonts)))
+      (%map-shaped-glyphs glyphs font #'render))))
 
 (defun text-to-sdfs (font text glyph-width glyph-height
-                     &key direction script language (range 4.0d0) (padding 2.0))
+                     &key direction script language (range 4.0d0) (padding 2.0)
+                          alignment line-height (fallback-fonts *fallback-fonts*))
   "Shape TEXT and render each visible glyph as a positioned SDF bitmap.
-Returns a list of (x y bitmap). See SHAPE-TO-SDF for bitmap format."
-  (let ((glyphs (shape-text font text :direction direction
-                                       :script script :language language)))
-    (%map-shaped-glyphs
-     glyphs
-     (lambda (glyph-id)
-       (let ((shape (glyph-to-shape font glyph-id)))
-         (when shape
-           (list (shape-to-sdf shape glyph-width glyph-height
-                               :range range :padding padding))))))))
+Returns a list of (x y bitmap). See SHAPE-TO-SDF for bitmap format.
+Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height."
+  (flet ((render (glyph-id font)
+           (let ((shape (glyph-to-shape font glyph-id)))
+             (when shape
+               (list (shape-to-sdf shape glyph-width glyph-height
+                                   :range range :padding padding))))))
+    (let ((glyphs (shape-text font text
+                               :direction direction :script script :language language
+                               :alignment alignment :line-height line-height
+                               :fallback-fonts fallback-fonts)))
+      (%map-shaped-glyphs glyphs font #'render))))
 
 (defun text-to-msdfs (font text glyph-width glyph-height
-                      &key direction script language (range 4.0d0) (padding 2.0))
+                      &key direction script language (range 4.0d0) (padding 2.0)
+                           alignment line-height (fallback-fonts *fallback-fonts*))
   "Shape TEXT and render each visible glyph as a positioned MSDF bitmap.
-Returns a list of (x y bitmap). See SHAPE-TO-MSDF for bitmap format."
-  (let ((glyphs (shape-text font text :direction direction
-                                       :script script :language language)))
-    (%map-shaped-glyphs
-     glyphs
-     (lambda (glyph-id)
-       (let ((shape (glyph-to-shape font glyph-id)))
-         (when shape
-           (list (shape-to-msdf shape glyph-width glyph-height
-                                :range range :padding padding))))))))
+Returns a list of (x y bitmap). See SHAPE-TO-MSDF for bitmap format.
+Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height."
+  (flet ((render (glyph-id font)
+           (let ((shape (glyph-to-shape font glyph-id)))
+             (when shape
+               (list (shape-to-msdf shape glyph-width glyph-height
+                                    :range range :padding padding))))))
+    (let ((glyphs (shape-text font text
+                               :direction direction :script script :language language
+                               :alignment alignment :line-height line-height
+                               :fallback-fonts fallback-fonts)))
+      (%map-shaped-glyphs glyphs font #'render))))
 
 
 (declaim (inline %smoothstep))
@@ -630,16 +820,54 @@ EDGE-WIDTH controls anti-aliasing sharpness; NIL auto-computes ~1px of AA."
       (shape-to-bitmap shape width height :range range :padding padding :edge-width edge-width))))
 
 (defun text-to-bitmaps (font text glyph-width glyph-height
-                        &key direction script language (range 4.0d0) (padding 2.0) (edge-width nil))
+                        &key direction script language (range 4.0d0) (padding 2.0) (edge-width nil)
+                             alignment line-height (fallback-fonts *fallback-fonts*))
   "Shape TEXT and render each visible glyph as a positioned anti-aliased bitmap.
-Returns a list of (x y bitmap). See SHAPE-TO-BITMAP for bitmap format."
-  (let ((glyphs (shape-text font text :direction direction
-                                       :script script :language language)))
-    (%map-shaped-glyphs
-     glyphs
-     (lambda (glyph-id)
-       (let ((shape (glyph-to-shape font glyph-id)))
-         (when shape
-           (list (shape-to-bitmap shape glyph-width glyph-height
-                                  :range range :padding padding
-                                  :edge-width edge-width))))))))
+Returns a list of (x y bitmap). See SHAPE-TO-BITMAP for bitmap format.
+Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height."
+  (flet ((render (glyph-id font)
+           (let ((shape (glyph-to-shape font glyph-id)))
+             (when shape
+               (list (shape-to-bitmap shape glyph-width glyph-height
+                                      :range range :padding padding
+                                      :edge-width edge-width))))))
+    (let ((glyphs (shape-text font text
+                               :direction direction :script script :language language
+                               :alignment alignment :line-height line-height
+                               :fallback-fonts fallback-fonts)))
+      (%map-shaped-glyphs glyphs font #'render))))
+
+;;;; ——— shape-text-lines ———
+
+(defun shape-text-lines (font text &key direction script language
+                                        alignment line-height
+                                        (fallback-fonts *fallback-fonts*))
+  "Shape multi-line TEXT. Returns a list of plists (:y y-offset :x x-offset :glyphs shaped-glyphs).
+Text is split on #\Newline; y-offsets are stacked by LINE-HEIGHT (default = upem).
+ALIGNMENT is :left (default), :center, or :right."
+  (let* ((lines (if (find #\Newline text)
+                    (%split-lines text)
+                    (list text)))
+         (lh (or line-height (%get-font-upem font)))
+         (lines-glyphs (mapcar (lambda (line)
+                                 (if (string= line "")
+                                     nil
+                                     (shape-text font line
+                                                 :direction direction :script script
+                                                 :language language
+                                                 :fallback-fonts fallback-fonts)))
+                               lines))
+         (line-widths (mapcar (lambda (glyphs)
+                                (reduce #'+ glyphs :key #'shaped-glyph-x-advance
+                                                    :initial-value 0))
+                              lines-glyphs))
+         (max-width (reduce #'max line-widths :initial-value 0))
+         (current-y 0))
+    (loop for glyphs in lines-glyphs
+          for lw in line-widths
+          for start-x = (ecase (or alignment :left)
+                          (:left   0)
+                          (:center (floor (- max-width lw) 2))
+                          (:right  (- max-width lw)))
+          collect (list :y current-y :x start-x :glyphs glyphs)
+          do (incf current-y lh))))
