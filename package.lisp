@@ -26,6 +26,7 @@
    #:shaped-glyph-skip
    #:shape-text
    #:shape-text-lines
+   #:string-bounds
    #:text-to-meshes
    #:text-to-sdfs
    #:text-to-msdfs

@@ -1020,3 +1020,58 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
                           (:right  (- max-line-width lw)))
           collect (list :y current-y :x start-x :glyphs glyphs)
           do (incf current-y lh))))
+
+;;;; ——— string-bounds ———
+
+(defun string-bounds (font text &key direction script language
+                                    alignment line-height
+                                    max-width (wrap :word)
+                                    depth
+                                    (fallback-fonts *fallback-fonts*))
+  "Calculate the ink bounding box of TEXT shaped with FONT, without rendering.
+All values are in font units. Coordinates follow OBJ/3D convention: X rightward,
+Y upward, baseline at Y=0. For multi-line text, lines stack downward from the first.
+
+Without DEPTH: returns (VALUES width height) — the unsigned ink extent.
+With DEPTH:    returns (VALUES min-x min-y min-z max-x max-y max-z).
+
+When the text contains no visible glyphs, returns (VALUES 0 0) or all zeros."
+  (let ((glyphs (shape-text font text
+                             :direction direction :script script :language language
+                             :alignment alignment :line-height line-height
+                             :max-width max-width :wrap wrap
+                             :fallback-fonts fallback-fonts))
+        (cursor-x 0)
+        (cursor-y 0)
+        (ink-min-x nil)
+        (ink-min-y nil)
+        (ink-max-x nil)
+        (ink-max-y nil))
+    (dolist (sg glyphs)
+      (let ((pen-x (+ cursor-x (shaped-glyph-x-offset sg)))
+            (pen-y (+ cursor-y (shaped-glyph-y-offset sg)))
+            (gly-font (or (shaped-glyph-font sg) font)))
+        (unless (shaped-glyph-skip sg)
+          (let ((shape (glyph-to-shape gly-font (shaped-glyph-glyph-id sg))))
+            (when shape
+              (multiple-value-bind (gmin-x gmin-y gmax-x gmax-y)
+                  (shape-bounds shape)
+                ;; pen-y is Y-down; glyph shapes are Y-up.
+                ;; Effective Y = shape-Y - pen-Y (matches OBJ export convention).
+                (let ((eff-min-x (+ pen-x gmin-x))
+                      (eff-max-x (+ pen-x gmax-x))
+                      (eff-min-y (- gmin-y pen-y))
+                      (eff-max-y (- gmax-y pen-y)))
+                  (setf ink-min-x (if ink-min-x (min ink-min-x eff-min-x) eff-min-x)
+                        ink-max-x (if ink-max-x (max ink-max-x eff-max-x) eff-max-x)
+                        ink-min-y (if ink-min-y (min ink-min-y eff-min-y) eff-min-y)
+                        ink-max-y (if ink-max-y (max ink-max-y eff-max-y) eff-max-y)))))))
+        (incf cursor-x (shaped-glyph-x-advance sg))
+        (incf cursor-y (shaped-glyph-y-advance sg))))
+    (let ((min-x (or ink-min-x 0.0))
+          (max-x (or ink-max-x 0.0))
+          (min-y (or ink-min-y 0.0))
+          (max-y (or ink-max-y 0.0)))
+      (if depth
+          (values min-x min-y 0.0 max-x max-y (coerce depth 'single-float))
+          (values (- max-x min-x) (- max-y min-y))))))
