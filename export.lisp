@@ -14,7 +14,7 @@
 
 (defun %render-string-png (file font text pixel-height color
                            &key (alignment :left) fallback-fonts line-height
-                                max-width (wrap :word) png-size)
+                                max-width (wrap :word) png-size (anti-alias t))
   "Render TEXT using FONT to a PNG file at FILE."
   (let* ((upem (cffi:with-foreign-objects ((x :int) (y :int))
                  (hb:hb-font-get-scale font x y)
@@ -105,39 +105,52 @@
                          (< gx0 canvas-width) (> gx1 0)
                          (< (+ gy0 y-offset) canvas-height)
                          (> (+ gy1 y-offset) 0))
-                (let* ((cache-key (list gid gw gh))
-                       (sdf (or (gethash cache-key sdf-cache)
-                                (setf (gethash cache-key sdf-cache)
-                                      (harfarasta::generate-sdf-from-shape
-                                       shape gw gh
-                                       :range sdf-range :scale sdf-scale
-                                       :translate-x sdf-tx :translate-y sdf-ty))))
-                       (sdf-data (harfarasta::bitmap-data sdf))
-                       (edge-w (coerce (/ 0.5d0 (* sdf-scale sdf-range)) 'single-float)))
-                  (loop for sy from 0 below gh
-                        for cy = (- canvas-height 1 (+ gy0 y-offset sy))
-                        when (and (>= cy 0) (< cy canvas-height))
-                          do (loop for sx from 0 below gw
-                                   for cx = (+ gx0 sx)
-                                   when (and (>= cx 0) (< cx canvas-width))
-                                     do (let* ((sd (aref sdf-data (+ sx (* sy gw))))
-                                               (coverage (- 1.0 (%smoothstep (- 0.5 edge-w) (+ 0.5 edge-w) sd)))
-                                               (alpha (round (* (max 0.0 (min 1.0 coverage)) 255.0))))
-                                          (when (> alpha 0)
-                                            (let ((old-a (aref image cy cx 3)))
-                                              (if (zerop old-a)
-                                                  (setf (aref image cy cx 0) cr
-                                                        (aref image cy cx 1) cg
-                                                        (aref image cy cx 2) cb
-                                                        (aref image cy cx 3) alpha)
-                                                  (let* ((sa (/ alpha 255.0))
-                                                         (da (/ old-a 255.0))
-                                                         (out-a (+ sa (* da (- 1.0 sa)))))
-                                                    (setf (aref image cy cx 0) cr
-                                                          (aref image cy cx 1) cg
-                                                          (aref image cy cx 2) cb
-                                                          (aref image cy cx 3) (round (* out-a 255))))))))))))))))
-      (zpng:write-png png file))))
+                (flet ((blit-pixel (cy cx alpha)
+                         (when (> alpha 0)
+                           (let ((old-a (aref image cy cx 3)))
+                             (if (zerop old-a)
+                                 (setf (aref image cy cx 0) cr
+                                       (aref image cy cx 1) cg
+                                       (aref image cy cx 2) cb
+                                       (aref image cy cx 3) alpha)
+                                 (let* ((sa (/ alpha 255.0))
+                                        (da (/ old-a 255.0))
+                                        (out-a (+ sa (* da (- 1.0 sa)))))
+                                   (setf (aref image cy cx 0) cr
+                                         (aref image cy cx 1) cg
+                                         (aref image cy cx 2) cb
+                                         (aref image cy cx 3) (round (* out-a 255)))))))))
+                  (if anti-alias
+                      (let* ((cache-key (list gid gw gh))
+                             (sdf (or (gethash cache-key sdf-cache)
+                                      (setf (gethash cache-key sdf-cache)
+                                            (harfarasta::generate-sdf-from-shape
+                                             shape gw gh
+                                             :range sdf-range :scale sdf-scale
+                                             :translate-x sdf-tx :translate-y sdf-ty))))
+                             (sdf-data (harfarasta::bitmap-data sdf))
+                             (edge-w (coerce (/ 0.5d0 (* sdf-scale sdf-range)) 'single-float)))
+                        (loop for sy from 0 below gh
+                              for cy = (- canvas-height 1 (+ gy0 y-offset sy))
+                              when (and (>= cy 0) (< cy canvas-height))
+                                do (loop for sx from 0 below gw
+                                         for cx = (+ gx0 sx)
+                                         when (and (>= cx 0) (< cx canvas-width))
+                                           do (let* ((sd (aref sdf-data (+ sx (* sy gw))))
+                                                     (coverage (- 1.0 (%smoothstep (- 0.5 edge-w) (+ 0.5 edge-w) sd)))
+                                                     (alpha (round (* (max 0.0 (min 1.0 coverage)) 255.0))))
+                                                (blit-pixel cy cx alpha)))))
+                      (loop for sy from 0 below gh
+                            for cy = (- canvas-height 1 (+ gy0 y-offset sy))
+                            when (and (>= cy 0) (< cy canvas-height))
+                              do (loop for sx from 0 below gw
+                                       for cx = (+ gx0 sx)
+                                       when (and (>= cx 0) (< cx canvas-width))
+                                         do (let* ((px (coerce (/ (+ sx 0.5d0 sdf-tx) sdf-scale) 'single-float))
+                                                   (py (coerce (/ (+ sy 0.5d0 sdf-ty) sdf-scale) 'single-float)))
+                                              (unless (zerop (harfarasta::%shape-winding-at shape px py))
+                                                (blit-pixel cy cx 255)))))))))))
+      (zpng:write-png png file)))))
 
 (declaim (inline %smoothstep))
 (defun %smoothstep (edge0 edge1 x)
@@ -205,7 +218,8 @@ MAX-WIDTH triggers word wrapping in output units; WRAP is :word or :glyph."
                                      (weight :regular) (size 64)
                                      (color '(255 255 255)) depth (alignment :left)
                                      line-height fallback-fonts
-                                     max-width (wrap :word) png-size)
+                                     max-width (wrap :word) png-size
+                                     (anti-alias t))
   "Render TEXT to FILE in the specified format.
 AS is :png or :obj.
 Font can be specified by FONT-PATH or by FAMILY/WEIGHT for discovery.
@@ -228,7 +242,8 @@ nil or :relative uses auto-fit sizing."
         (:png (%render-string-png file f text size color
                                   :alignment alignment :fallback-fonts fallback-fonts
                                   :line-height line-height :max-width max-width
-                                  :wrap wrap :png-size png-size))
+                                  :wrap wrap :png-size png-size
+                                  :anti-alias anti-alias))
         (:obj (%render-string-obj file f text size :depth depth
                                   :alignment alignment :line-height line-height
                                   :fallback-fonts fallback-fonts

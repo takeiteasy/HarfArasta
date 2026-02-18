@@ -1,17 +1,22 @@
 # HarfArasta 
 
-HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shaping library for Common Lisp that uses [HarfBuzz](https://harfbuzz.github.io/) for text shaping. After shaping, it renders glyphs as SDF, MSDF, anti-aliased bitmap, or triangulated mesh -- suitable for GPU text rendering, game engines, UI toolkits, or offline export.
+HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shaping library for Common Lisp that uses [HarfBuzz](https://harfbuzz.github.io/) for text shaping. After shaping, it renders glyphs as SDF, MSDF, bitmap, or triangulated mesh -- suitable for GPU text rendering, game engines, UI toolkits, or offline export.
 
 ## Features
 
 - **HarfBuzz text shaping** -- full OpenType layout (ligatures, kerning, BiDi, script/language support)
 - **Glyph outline extraction** -- convert glyph outlines to vector shapes
-- **MSDF/SDF rendering** -- multi-channel and single-channel signed distance fields
-- **Bitmap rendering** -- anti-aliased grayscale coverage bitmaps via SDF thresholding
+- **M/SDF rendering** -- multi-channel and single-channel signed distance fields
+- **Bitmap rendering** -- anti-aliased grayscale coverage bitmaps via SDF thresholding by default, fast direct rendering optionally
 - **Mesh generation** -- constrained Delaunay triangulation of glyph outlines
 - **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `harfarasta/export`)
 - **Extra shaping** -- automatic line breaking at a configurable max width (word or glyph boundary modes), newline support and alignment.
 - **WOFF1/WOFF2** -- Web Open Font Format 1.0/2.0
+
+### TODO
+
+- [ ] Add svg output for `harfarasta/export`
+- [ ] Font atlas export for `harfarasta/export`
 
 ## Quickstart
 
@@ -133,6 +138,7 @@ mkdir -p build && cd build && cmake .. && make
 | `:max-width` | `nil` | Max text width — pixels for PNG, output units for OBJ; triggers word wrapping |
 | `:wrap` | `:word` | `:word` — break at word boundaries (default); `:glyph` — break at any glyph |
 | `:png-size` | `nil` | `'(W H)` for a fixed canvas size, or `nil` for auto-fit (PNG only) 
+| `:anti-alias` | `t` | When `nil`, renderer will skip smoothstep and SDF steps |
 
 ## License
 

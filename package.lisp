@@ -34,6 +34,9 @@
    #:shape-to-bitmap
    #:glyph-to-bitmap
    #:text-to-bitmaps
+   #:shape-to-bitmap-fast
+   #:glyph-to-bitmap-fast
+   #:text-to-bitmaps-fast
    ;; Bitmap struct accessors
    #:bitmap
    #:bitmap-data

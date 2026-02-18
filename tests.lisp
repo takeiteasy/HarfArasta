@@ -25,10 +25,22 @@ Uses FONT-PATH if given, otherwise discovers Arial."
                            :as :png :font-path path :size 64
                            :color '(255 255 255)))
 
+      (format t "1.5 PNG: 'Hello' white on transparent (fast), 64px~%")
+      (time (render-string "Hello" (out "hello-white-64-fast.png")
+                           :as :png :font-path path :size 64
+                           :color '(255 255 255)
+                           :anti-alias nil))
+
       (format t "2. PNG: a long string in red on transparent, 128px~%")
       (time (render-string "The quick brown fox jumps over the lazy dog" (out "long-red-128.png")
                            :as :png :font-path path :size 128
                            :color '(255 0 0)))
+      
+      (format t "2.5 PNG: a long string in red on transparent (fast), 128px~%")
+      (time (render-string "The quick brown fox jumps over the lazy dog" (out "long-red-128-fast.png")
+                           :as :png :font-path path :size 128
+                           :color '(255 0 0)
+                           :anti-alias nil))
 
       (format t "3. PNG: 'ABCDEF' green on transparent, 48px~%")
       (time (render-string "ABCDEF" (out "abcdef-green-48.png")
