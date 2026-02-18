@@ -75,4 +75,25 @@ Uses FONT-PATH if given, otherwise discovers Arial."
            (harfarasta/fontstash:atlas-to-png atlas (out "atlas-sdf.png"))
            (format t "   Atlas PNG written to ~A~%" (out "atlas-sdf.png")))))
 
-      (format t "~%Done. ~D files written to ~A~%" 7 output-dir))))
+      ;; Word wrap tests
+      (format t "8. PNG: word wrap 'The quick brown fox...' at 200px, 64px~%")
+      (time (render-string "The quick brown fox jumps over the lazy dog" (out "wordwrap-200.png")
+                           :as :png :font-path path :size 64
+                           :color '(255 200 100) :max-width 200))
+
+      (format t "9. PNG: glyph wrap 'Thequickbrownfox' at 150px, 64px~%")
+      (time (render-string "Thequickbrownfox" (out "glyphwrap-150.png")
+                           :as :png :font-path path :size 64
+                           :color '(100 200 255) :max-width 150 :wrap :glyph))
+
+      (format t "10. PNG: fixed canvas 200x80, 'Hello' 64px~%")
+      (time (render-string "Hello" (out "fixed-canvas-200x80.png")
+                           :as :png :font-path path :size 64
+                           :color '(255 255 255) :png-size '(200 80)))
+
+      (format t "11. PNG: word wrap + fixed canvas 200x200, 48px~%")
+      (time (render-string "Wrap and clip together" (out "wrap-and-clip.png")
+                           :as :png :font-path path :size 48
+                           :color '(200 100 255) :max-width 200 :png-size '(200 200)))
+
+      (format t "~%Done. ~D files written to ~A~%" 11 output-dir))))

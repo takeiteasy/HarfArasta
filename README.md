@@ -5,14 +5,12 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 ## Features
 
 - **HarfBuzz text shaping** -- full OpenType layout (ligatures, kerning, BiDi, script/language support)
-- **Font discovery** -- find system fonts by family, weight, slant, spacing, or stretch
 - **Glyph outline extraction** -- convert glyph outlines to vector shapes
-- **SDF rendering** -- single-channel signed distance fields
-- **MSDF rendering** -- multi-channel signed distance fields for sharp corners at any zoom
+- **MSDF/SDF rendering** -- multi-channel and single-channel signed distance fields
 - **Bitmap rendering** -- anti-aliased grayscale coverage bitmaps via SDF thresholding
 - **Mesh generation** -- constrained Delaunay triangulation of glyph outlines
-- **String rendering** -- shape a string and render all visible glyphs with correct positioning
 - **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `harfarasta/export`)
+- **Extra shaping** -- automatic line breaking at a configurable max width (word or glyph boundary modes), newline support and alignment.
 - **WOFF1/WOFF2** -- Web Open Font Format 1.0/2.0
 
 ## Quickstart
@@ -128,6 +126,13 @@ mkdir -p build && cd build && cmake .. && make
 | `:weight` | `:regular` | Font weight for discovery |
 | `:size` | `64` | Pixel height (PNG) or unit scale (OBJ) |
 | `:color` | `(255 255 255)` | RGB color list, 0-255 (PNG only) |
+| `:depth` | `nil` | Z extrusion depth in output units (OBJ only) |
+| `:alignment` | `:left` | `:left`, `:center`, or `:right` |
+| `:line-height` | `nil` | Y distance between lines in font units (default = upem) |
+| `:fallback-fonts` | `nil` | Font pointers tried for missing glyphs |
+| `:max-width` | `nil` | Max text width — pixels for PNG, output units for OBJ; triggers word wrapping |
+| `:wrap` | `:word` | `:word` — break at word boundaries (default); `:glyph` — break at any glyph |
+| `:png-size` | `nil` | `'(W H)` for a fixed canvas size, or `nil` for auto-fit (PNG only) 
 
 ## License
 

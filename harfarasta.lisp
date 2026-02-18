@@ -589,8 +589,130 @@ Returns a new list; unresolved glyphs are left with glyph-id=0."
   "Return the units-per-em of FONT."
   (hb:hb-face-get-upem (hb:hb-font-get-face font)))
 
+;;;; ——— Word wrap helpers ———
+
+(defun %split-words (text)
+  "Split TEXT on spaces/tabs; return list of non-empty word strings."
+  (let ((words '())
+        (start nil))
+    (loop for i from 0 below (length text)
+          for c = (char text i)
+          do (if (or (char= c #\Space) (char= c #\Tab))
+                 (when start
+                   (push (subseq text start i) words)
+                   (setf start nil))
+                 (unless start (setf start i))))
+    (when start (push (subseq text start) words))
+    (nreverse words)))
+
+(defun %measure-line-width (font text &key direction script language fallback-fonts)
+  "Return total x-advance of TEXT shaped with FONT, in font units."
+  (reduce #'+ (shape-text font text
+                          :direction direction
+                          :script script
+                          :language language
+                          :fallback-fonts (or fallback-fonts *fallback-fonts*))
+          :key #'shaped-glyph-x-advance
+          :initial-value 0))
+
+(defun %wrap-paragraph (font text max-width &key direction script language fallback-fonts)
+  "Greedy word-wrap a single paragraph (no #\\Newline). Returns list of line strings.
+A word wider than MAX-WIDTH is placed on its own line without splitting."
+  (let ((words (%split-words text)))
+    (if (null words)
+        (list "")
+        (let ((lines '())
+              (current-words '()))
+          (dolist (word words)
+            (let* ((candidate (if current-words
+                                  (format nil "~{~A~^ ~}" (append current-words (list word)))
+                                  word))
+                   (width (%measure-line-width font candidate
+                                              :direction direction
+                                              :script script
+                                              :language language
+                                              :fallback-fonts fallback-fonts)))
+              (if (and (> width max-width) current-words)
+                  (progn
+                    (push (format nil "~{~A~^ ~}" current-words) lines)
+                    (setf current-words (list word)))
+                  (setf current-words (append current-words (list word))))))
+          (when current-words
+            (push (format nil "~{~A~^ ~}" current-words) lines))
+          (nreverse lines)))))
+
+(defun %utf8-byte-offset->char-index (string byte-offset)
+  "Convert a UTF-8 byte offset to the corresponding character index in STRING."
+  (let ((byte-count 0))
+    (loop for i from 0 below (length string)
+          when (>= byte-count byte-offset) return i
+          do (let ((code (char-code (char string i))))
+               (incf byte-count (cond ((< code #x80) 1)
+                                      ((< code #x800) 2)
+                                      ((< code #x10000) 3)
+                                      (t 4))))
+          finally (return (length string)))))
+
+(defun %wrap-paragraph-glyph (font text max-width &key direction script language fallback-fonts)
+  "Glyph-boundary wrapping for a single paragraph. Returns list of line strings.
+Breaks at any glyph boundary when accumulated advance would exceed MAX-WIDTH."
+  (let* ((shaped (shape-text font text
+                              :direction direction
+                              :script script
+                              :language language
+                              :fallback-fonts (or fallback-fonts *fallback-fonts*)))
+         (split-byte-offsets '())
+         (current-width 0))
+    (dolist (sg shaped)
+      (let ((advance (shaped-glyph-x-advance sg))
+            (cluster (shaped-glyph-cluster sg)))
+        (when (and (> (+ current-width advance) max-width)
+                   (> current-width 0))
+          (push cluster split-byte-offsets)
+          (setf current-width 0))
+        (incf current-width advance)))
+    (if (null split-byte-offsets)
+        (list text)
+        (let* ((offsets (mapcar (lambda (bo) (%utf8-byte-offset->char-index text bo))
+                                (nreverse split-byte-offsets)))
+               (result '())
+               (prev 0))
+          (dolist (offset offsets)
+            (push (subseq text prev offset) result)
+            (setf prev offset))
+          (push (subseq text prev) result)
+          (nreverse result)))))
+
+(defun %wrap-text (font text max-width wrap &key direction script language fallback-fonts)
+  "Pre-process TEXT inserting #\\Newline at wrap boundaries.
+WRAP is :word (greedy word-boundary) or :glyph (any glyph boundary).
+Hard #\\Newline in TEXT are preserved; each resulting paragraph is wrapped independently."
+  (let ((paragraphs (%split-lines text)))
+    (with-output-to-string (s)
+      (loop for para in paragraphs
+            for first-p = t then nil
+            unless first-p do (write-char #\Newline s)
+            do (let ((lines (if (string= para "")
+                                (list "")
+                                (ecase wrap
+                                  (:word  (%wrap-paragraph font para max-width
+                                                           :direction direction
+                                                           :script script
+                                                           :language language
+                                                           :fallback-fonts fallback-fonts))
+                                  (:glyph (%wrap-paragraph-glyph font para max-width
+                                                                  :direction direction
+                                                                  :script script
+                                                                  :language language
+                                                                  :fallback-fonts fallback-fonts))))))
+                 (loop for line in lines
+                       for first-l = t then nil
+                       unless first-l do (write-char #\Newline s)
+                       do (write-string line s)))))))
+
 (defun shape-text (font text &key direction script language
                                alignment line-height
+                               max-width (wrap :word)
                                (fallback-fonts *fallback-fonts*))
   "Shape TEXT using FONT via HarfBuzz. Returns a list of shaped-glyph structs.
 DIRECTION is a keyword (:ltr :rtl :ttb :btt) or NIL for auto-detection.
@@ -598,13 +720,21 @@ SCRIPT is a 4-char tag string (e.g. \"Latn\") or NIL.
 LANGUAGE is a BCP-47 string (e.g. \"en\") or NIL.
 ALIGNMENT is :left (default), :center, or :right for multi-line layout.
 LINE-HEIGHT is the Y distance between lines in font units (default = upem).
+MAX-WIDTH, when non-NIL, triggers automatic line wrapping at that width in font units.
+WRAP controls the wrapping mode: :word (default, break at word boundaries) or
+:glyph (break at any glyph boundary, allowing mid-word breaks).
 FALLBACK-FONTS is a list of hb_font_t pointers tried for missing glyphs.
 Unset properties are guessed by hb_buffer_guess_segment_properties.
 For multi-line TEXT (containing #\\Newline), returns a flat list that includes
 synthetic skip glyphs encoding cursor jumps; consumers use %map-shaped-glyphs."
-  (if (find #\Newline text)
+  (let* ((effective-text (if max-width
+                             (%wrap-text font text max-width wrap
+                                         :direction direction :script script
+                                         :language language :fallback-fonts fallback-fonts)
+                             text)))
+  (if (find #\Newline effective-text)
       ;; Multiline path: split, shape each line, build flat list with skip glyphs
-      (let* ((lines (%split-lines text))
+      (let* ((lines (%split-lines effective-text))
              (lh (or line-height (%get-font-upem font)))
              (lines-glyphs (mapcar (lambda (line)
                                      (if (string= line "")
@@ -620,7 +750,7 @@ synthetic skip glyphs encoding cursor jumps; consumers use %map-shaped-glyphs."
                                             :key #'shaped-glyph-x-advance
                                             :initial-value 0))
                                   lines-glyphs))
-             (max-width (reduce #'max line-widths :initial-value 0))
+             (max-line-width (reduce #'max line-widths :initial-value 0))
              (result '())
              (prev-end-x 0))
         (loop for glyphs in lines-glyphs
@@ -628,8 +758,8 @@ synthetic skip glyphs encoding cursor jumps; consumers use %map-shaped-glyphs."
               for line-idx from 0
               for start-x = (ecase (or alignment :left)
                                (:left   0)
-                               (:center (floor (- max-width lw) 2))
-                               (:right  (- max-width lw)))
+                               (:center (floor (- max-line-width lw) 2))
+                               (:right  (- max-line-width lw)))
               ;; Skip glyph: advance cursor to start of this line
               do (push (make-shaped-glyph
                         :x-advance (- start-x prev-end-x)
@@ -643,7 +773,7 @@ synthetic skip glyphs encoding cursor jumps; consumers use %map-shaped-glyphs."
       (let ((buf (hb:hb-buffer-create)))
         (unwind-protect
              (progn
-               (hb:hb-buffer-add-utf8 buf text -1 0 -1)
+               (hb:hb-buffer-add-utf8 buf effective-text -1 0 -1)
                (when direction
                  (hb:hb-buffer-set-direction buf direction))
                (when script
@@ -684,9 +814,9 @@ synthetic skip glyphs encoding cursor jumps; consumers use %map-shaped-glyphs."
                                                        pos '(:struct hb:hb-glyph-position-t)
                                                        'hb::y-offset))))))))
                  (if fallback-fonts
-                     (%apply-fallback-fonts result text fallback-fonts)
+                     (%apply-fallback-fonts result effective-text fallback-fonts)
                      result)))
-          (hb:hb-buffer-destroy buf)))))
+          (hb:hb-buffer-destroy buf))))))
 
 (defun %map-shaped-glyphs (shaped-glyphs primary-font render-fn
                            &key (start-x 0) (start-y 0))
@@ -733,10 +863,12 @@ Calls RENDER-FN as per %MAP-SHAPED-GLYPHS. Returns combined result list."
     results))
 
 (defun text-to-meshes (font text &key direction script language (segments-per-edge 8) depth
-                                     alignment line-height (fallback-fonts *fallback-fonts*))
+                                     alignment line-height max-width (wrap :word)
+                                     (fallback-fonts *fallback-fonts*))
   "Shape TEXT and triangulate each visible glyph into a positioned mesh.
 Returns a list of (x y vertices indices). See SHAPE-TO-MESH for array formats.
-Supports multi-line via #\\Newline and :alignment (:left/:center/:right) / :line-height."
+Supports multi-line via #\\Newline and :alignment (:left/:center/:right) / :line-height.
+MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is :word or :glyph."
   (flet ((render (glyph-id font)
            (let ((shape (glyph-to-shape font glyph-id)))
              (when shape
@@ -746,15 +878,18 @@ Supports multi-line via #\\Newline and :alignment (:left/:center/:right) / :line
     (let ((glyphs (shape-text font text
                                :direction direction :script script :language language
                                :alignment alignment :line-height line-height
+                               :max-width max-width :wrap wrap
                                :fallback-fonts fallback-fonts)))
       (%map-shaped-glyphs glyphs font #'render))))
 
 (defun text-to-sdfs (font text glyph-width glyph-height
                      &key direction script language (range 4.0d0) (padding 2.0)
-                          alignment line-height (fallback-fonts *fallback-fonts*))
+                          alignment line-height max-width (wrap :word)
+                          (fallback-fonts *fallback-fonts*))
   "Shape TEXT and render each visible glyph as a positioned SDF bitmap.
 Returns a list of (x y bitmap). See SHAPE-TO-SDF for bitmap format.
-Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height."
+Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height.
+MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is :word or :glyph."
   (flet ((render (glyph-id font)
            (let ((shape (glyph-to-shape font glyph-id)))
              (when shape
@@ -763,15 +898,18 @@ Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-
     (let ((glyphs (shape-text font text
                                :direction direction :script script :language language
                                :alignment alignment :line-height line-height
+                               :max-width max-width :wrap wrap
                                :fallback-fonts fallback-fonts)))
       (%map-shaped-glyphs glyphs font #'render))))
 
 (defun text-to-msdfs (font text glyph-width glyph-height
                       &key direction script language (range 4.0d0) (padding 2.0)
-                           alignment line-height (fallback-fonts *fallback-fonts*))
+                           alignment line-height max-width (wrap :word)
+                           (fallback-fonts *fallback-fonts*))
   "Shape TEXT and render each visible glyph as a positioned MSDF bitmap.
 Returns a list of (x y bitmap). See SHAPE-TO-MSDF for bitmap format.
-Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height."
+Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height.
+MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is :word or :glyph."
   (flet ((render (glyph-id font)
            (let ((shape (glyph-to-shape font glyph-id)))
              (when shape
@@ -780,6 +918,7 @@ Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-
     (let ((glyphs (shape-text font text
                                :direction direction :script script :language language
                                :alignment alignment :line-height line-height
+                               :max-width max-width :wrap wrap
                                :fallback-fonts fallback-fonts)))
       (%map-shaped-glyphs glyphs font #'render))))
 
@@ -821,10 +960,12 @@ EDGE-WIDTH controls anti-aliasing sharpness; NIL auto-computes ~1px of AA."
 
 (defun text-to-bitmaps (font text glyph-width glyph-height
                         &key direction script language (range 4.0d0) (padding 2.0) (edge-width nil)
-                             alignment line-height (fallback-fonts *fallback-fonts*))
+                             alignment line-height max-width (wrap :word)
+                             (fallback-fonts *fallback-fonts*))
   "Shape TEXT and render each visible glyph as a positioned anti-aliased bitmap.
 Returns a list of (x y bitmap). See SHAPE-TO-BITMAP for bitmap format.
-Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height."
+Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height.
+MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is :word or :glyph."
   (flet ((render (glyph-id font)
            (let ((shape (glyph-to-shape font glyph-id)))
              (when shape
@@ -834,6 +975,7 @@ Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-
     (let ((glyphs (shape-text font text
                                :direction direction :script script :language language
                                :alignment alignment :line-height line-height
+                               :max-width max-width :wrap wrap
                                :fallback-fonts fallback-fonts)))
       (%map-shaped-glyphs glyphs font #'render))))
 
@@ -841,13 +983,20 @@ Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-
 
 (defun shape-text-lines (font text &key direction script language
                                         alignment line-height
+                                        max-width (wrap :word)
                                         (fallback-fonts *fallback-fonts*))
   "Shape multi-line TEXT. Returns a list of plists (:y y-offset :x x-offset :glyphs shaped-glyphs).
 Text is split on #\Newline; y-offsets are stacked by LINE-HEIGHT (default = upem).
-ALIGNMENT is :left (default), :center, or :right."
-  (let* ((lines (if (find #\Newline text)
-                    (%split-lines text)
-                    (list text)))
+ALIGNMENT is :left (default), :center, or :right.
+MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is :word or :glyph."
+  (let* ((effective-text (if max-width
+                             (%wrap-text font text max-width wrap
+                                         :direction direction :script script
+                                         :language language :fallback-fonts fallback-fonts)
+                             text))
+         (lines (if (find #\Newline effective-text)
+                    (%split-lines effective-text)
+                    (list effective-text)))
          (lh (or line-height (%get-font-upem font)))
          (lines-glyphs (mapcar (lambda (line)
                                  (if (string= line "")
@@ -861,13 +1010,13 @@ ALIGNMENT is :left (default), :center, or :right."
                                 (reduce #'+ glyphs :key #'shaped-glyph-x-advance
                                                     :initial-value 0))
                               lines-glyphs))
-         (max-width (reduce #'max line-widths :initial-value 0))
+         (max-line-width (reduce #'max line-widths :initial-value 0))
          (current-y 0))
     (loop for glyphs in lines-glyphs
           for lw in line-widths
           for start-x = (ecase (or alignment :left)
                           (:left   0)
-                          (:center (floor (- max-width lw) 2))
-                          (:right  (- max-width lw)))
+                          (:center (floor (- max-line-width lw) 2))
+                          (:right  (- max-line-width lw)))
           collect (list :y current-y :x start-x :glyphs glyphs)
           do (incf current-y lh))))

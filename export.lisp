@@ -13,16 +13,20 @@
 ;;; --- PNG export ---
 
 (defun %render-string-png (file font text pixel-height color
-                           &key (alignment :left) fallback-fonts)
+                           &key (alignment :left) fallback-fonts line-height
+                                max-width (wrap :word) png-size)
   "Render TEXT using FONT to a PNG file at FILE."
   (let* ((upem (cffi:with-foreign-objects ((x :int) (y :int))
                  (hb:hb-font-get-scale font x y)
                  (cffi:mem-ref x :int)))
          (scale (/ (coerce pixel-height 'double-float)
                    (coerce upem 'double-float)))
+         (max-width-fu (when max-width (round (/ max-width scale))))
          ;; shape-text now handles multiline and alignment via skip glyphs
          (glyphs (rich-text:shape-text font text
                                        :alignment alignment
+                                       :line-height line-height
+                                       :max-width max-width-fu :wrap wrap
                                        :fallback-fonts fallback-fonts))
          ;; Build glyph-data: (pen-x pen-y shape gid)
          ;; pen-x, pen-y in font units; pen-y is Y-down positive (0 = first line)
@@ -65,8 +69,12 @@
                                                      (ceiling padding)))))))))
          (x-offset (if (< (first bounds) 0) (- (first bounds)) 0))
          (y-offset (if (< (third bounds) 0) (- (third bounds)) 0))
-         (canvas-width  (max 1 (+ (second bounds) x-offset)))
-         (canvas-height (max 1 (+ (fourth bounds) y-offset))))
+         (canvas-width  (if (consp png-size)
+                            (first png-size)
+                            (max 1 (+ (second bounds) x-offset))))
+         (canvas-height (if (consp png-size)
+                            (second png-size)
+                            (max 1 (+ (fourth bounds) y-offset)))))
     (let* ((png (make-instance 'zpng:png
                                :width canvas-width :height canvas-height
                                :color-type :truecolor-alpha))
@@ -138,12 +146,14 @@
 
 ;;; --- OBJ export ---
 
-(defun %render-string-obj (file font text size &key depth alignment line-height fallback-fonts)
+(defun %render-string-obj (file font text size &key depth alignment line-height fallback-fonts
+                                                    max-width (wrap :word))
   "Render TEXT using FONT to a Wavefront OBJ file at FILE.
 SIZE is the scale factor applied to font-unit coordinates.
 DEPTH, when non-NIL, extrudes the mesh along Z in the same units as SIZE.
 ALIGNMENT is :left (default), :center, or :right.
-LINE-HEIGHT is the Y distance between lines in font units (default = upem)."
+LINE-HEIGHT is the Y distance between lines in font units (default = upem).
+MAX-WIDTH triggers word wrapping in output units; WRAP is :word or :glyph."
   (let* ((upem (cffi:with-foreign-objects ((x :int) (y :int))
                  (hb:hb-font-get-scale font x y)
                  (cffi:mem-ref x :int)))
@@ -152,9 +162,11 @@ LINE-HEIGHT is the Y distance between lines in font units (default = upem)."
          ;; Convert depth from output units to font units so that after
          ;; the OBJ export multiplies by scale, z comes out correct.
          (depth-fu (when depth (/ (coerce depth 'single-float) scale)))
+         (max-width-fu (when max-width (round (/ max-width scale))))
          (meshes (rich-text:text-to-meshes font text :depth depth-fu
                                            :alignment alignment
                                            :line-height line-height
+                                           :max-width max-width-fu :wrap wrap
                                            :fallback-fonts fallback-fonts))
          (global-vertex-offset 0))
     (with-open-file (out file :direction :output
@@ -192,7 +204,8 @@ LINE-HEIGHT is the Y distance between lines in font units (default = upem)."
 (defun render-string (text file &key (as :png) font-path (family "Arial")
                                      (weight :regular) (size 64)
                                      (color '(255 255 255)) depth (alignment :left)
-                                     line-height fallback-fonts)
+                                     line-height fallback-fonts
+                                     max-width (wrap :word) png-size)
   "Render TEXT to FILE in the specified format.
 AS is :png or :obj.
 Font can be specified by FONT-PATH or by FAMILY/WEIGHT for discovery.
@@ -200,15 +213,23 @@ SIZE is the pixel height for PNG or scale factor for OBJ.
 COLOR is an (R G B) list (0-255) used for PNG output.
 DEPTH, when non-NIL, extrudes OBJ meshes along Z.
 ALIGNMENT is :left (default), :center, or :right (supports #\Newline in TEXT).
-LINE-HEIGHT is the Y distance between lines in font units (OBJ only; default = upem).
-FALLBACK-FONTS is a list of hb_font_t pointers tried when a glyph is missing."
+LINE-HEIGHT is the Y distance between lines in font units (default = upem).
+FALLBACK-FONTS is a list of hb_font_t pointers tried when a glyph is missing.
+MAX-WIDTH triggers automatic word wrapping; pixels for PNG, output units for OBJ.
+WRAP controls the wrap mode: :word (default, break at word boundaries) or
+:glyph (break at any glyph boundary, allowing mid-word breaks).
+PNG-SIZE, when a list '(W H), fixes the canvas to exactly W x H pixels (PNG only);
+nil or :relative uses auto-fit sizing."
   (let ((path (if font-path
                   (pathname font-path)
                   (rich-text:find-font-path :family family :weight weight))))
     (rich-text:with-font (f path)
       (ecase as
         (:png (%render-string-png file f text size color
-                                  :alignment alignment :fallback-fonts fallback-fonts))
+                                  :alignment alignment :fallback-fonts fallback-fonts
+                                  :line-height line-height :max-width max-width
+                                  :wrap wrap :png-size png-size))
         (:obj (%render-string-obj file f text size :depth depth
                                   :alignment alignment :line-height line-height
-                                  :fallback-fonts fallback-fonts))))))
+                                  :fallback-fonts fallback-fonts
+                                  :max-width max-width :wrap wrap))))))
