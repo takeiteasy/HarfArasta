@@ -32,6 +32,7 @@
                (:file "woff")
                (:file "types")
                (:file "delaunay")
+               (:file "earcut")
                (:file "edge-coloring")
                (:file "math")
                (:file "distance")

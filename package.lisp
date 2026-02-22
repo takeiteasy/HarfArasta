@@ -14,6 +14,9 @@
    #:glyph-to-sdf
    #:glyph-to-msdf
    #:glyph-to-mesh
+   #:shape-to-mesh-fast
+   #:glyph-to-mesh-fast
+   #:text-to-meshes-fast
    #:shaped-glyph
    #:make-shaped-glyph
    #:shaped-glyph-glyph-id

@@ -474,6 +474,173 @@ Returns (VALUES vertices indices) — see SHAPE-TO-MESH for details."
     (when shape
       (shape-to-mesh shape :segments-per-edge segments-per-edge :depth depth))))
 
+;;; Fast mesh generation via earcut
+
+(defun %polygon-signed-area (polygon)
+  "Signed area of POLYGON (list of (x . y)). Positive = CCW, negative = CW."
+  (let ((sum 0.0d0)
+        (n (length polygon)))
+    (declare (type double-float sum))
+    (loop for i from 0 below n
+          for p1 = (nth i polygon)
+          for p2 = (nth (mod (1+ i) n) polygon)
+          do (incf sum (* (- (float (car p1) 1.0d0)
+                             (float (car p2) 1.0d0))
+                          (+ (float (cdr p1) 1.0d0)
+                             (float (cdr p2) 1.0d0)))))
+    (/ sum 2.0d0)))
+
+(defun %point-in-polygon-p (x y polygon)
+  "Ray-casting point-in-polygon test for point (X,Y) in POLYGON (list of (x . y))."
+  (let ((inside nil)
+        (n (length polygon)))
+    (loop for i from 0 below n
+          for p1 = (nth i polygon)
+          for p2 = (nth (mod (1+ i) n) polygon)
+          for x1 single-float = (car p1)
+          for y1 single-float = (cdr p1)
+          for x2 single-float = (car p2)
+          for y2 single-float = (cdr p2)
+          do (when (and (not (eq (> y1 y) (> y2 y)))
+                        (< x (+ x1 (/ (* (- y y1) (- x2 x1))
+                                       (- y2 y1)))))
+               (setf inside (not inside))))
+    inside))
+
+(defun shape-to-mesh-fast (shape &key (segments-per-edge 8) depth)
+  "Triangulate SHAPE into an indexed mesh via ear-clipping (earcut).
+Faster than SHAPE-TO-MESH but produces less uniform triangles.
+Returns (VALUES vertices indices) — same format as SHAPE-TO-MESH.
+SEGMENTS-PER-EDGE controls curve sampling resolution.
+When DEPTH is a number, the mesh is extruded along Z."
+  (let* ((contours (shape-contours shape))
+         (contour-polygons (mapcar (lambda (c)
+                                     (%linearize-contour c segments-per-edge))
+                                   contours))
+         ;; Classify contours by signed area
+         (contour-areas (mapcar #'%polygon-signed-area contour-polygons))
+         ;; Positive area = CCW = outer contour; negative = CW = hole
+         (outers nil)
+         (holes nil))
+    ;; Separate outers and holes
+    ;; TrueType convention: CW (negative area) = outer, CCW (positive) = hole
+    ;; OpenType/PostScript: CCW (positive area) = outer, CW (negative) = hole
+    ;; Detect convention from the largest contour (by absolute area)
+    (let ((largest-area 0.0d0))
+      (dolist (a contour-areas)
+        (when (> (abs a) (abs largest-area))
+          (setf largest-area a)))
+      ;; If largest contour has negative area, it's TrueType convention (CW=outer)
+      ;; If positive, it's PostScript convention (CCW=outer)
+      (let ((outer-positive-p (> largest-area 0.0d0)))
+        (loop for polygon in contour-polygons
+              for area in contour-areas
+              for idx from 0
+              do (if (if outer-positive-p (> area 0.0d0) (< area 0.0d0))
+                     (push (cons idx polygon) outers)
+                     (push (cons idx polygon) holes)))))
+    (setf outers (nreverse outers)
+          holes (nreverse holes))
+    ;; For each outer contour, find which holes belong to it
+    (let ((all-vertices nil)
+          (all-indices nil)
+          (global-vert-offset 0))
+      (dolist (outer-entry outers)
+        (let* ((outer-polygon (cdr outer-entry))
+               ;; Find holes contained in this outer contour
+               (contained-holes
+                 (loop for hole-entry in holes
+                       for hole-polygon = (cdr hole-entry)
+                       for first-pt = (first hole-polygon)
+                       when (and first-pt
+                                 (%point-in-polygon-p (car first-pt) (cdr first-pt)
+                                                      outer-polygon))
+                         collect hole-polygon))
+               ;; Build flat coords: outer first, then holes
+               (n-outer (length outer-polygon))
+               (hole-starts nil)
+               (total-verts n-outer))
+          ;; Calculate total vertex count and hole start indices
+          (dolist (hole contained-holes)
+            (push total-verts hole-starts)
+            (incf total-verts (length hole)))
+          (setf hole-starts (nreverse hole-starts))
+          ;; Build flat coordinate array
+          (let ((flat-coords (make-array (* total-verts 2) :element-type 'single-float)))
+            ;; Outer ring
+            (loop for pt in outer-polygon
+                  for i from 0
+                  do (setf (aref flat-coords (* i 2)) (coerce (car pt) 'single-float)
+                           (aref flat-coords (1+ (* i 2))) (coerce (cdr pt) 'single-float)))
+            ;; Hole rings
+            (let ((offset n-outer))
+              (dolist (hole contained-holes)
+                (loop for pt in hole
+                      for i from offset
+                      do (setf (aref flat-coords (* i 2)) (coerce (car pt) 'single-float)
+                               (aref flat-coords (1+ (* i 2))) (coerce (cdr pt) 'single-float)))
+                (incf offset (length hole))))
+            ;; Triangulate
+            (let ((tri-indices (earcut flat-coords hole-starts)))
+              (when (> (length tri-indices) 0)
+                ;; Remap indices to global vertex space
+                (loop for i from 0 below (length tri-indices)
+                      do (push (+ (aref tri-indices i) global-vert-offset) all-indices))
+                ;; Add vertices
+                (loop for i from 0 below total-verts
+                      do (push (cons (aref flat-coords (* i 2))
+                                     (aref flat-coords (1+ (* i 2))))
+                               all-vertices))))
+            (incf global-vert-offset total-verts))))
+      ;; Build output arrays
+      (setf all-vertices (nreverse all-vertices)
+            all-indices (nreverse all-indices))
+      (let* ((n-verts (length all-vertices))
+             (n-indices (length all-indices))
+             (vertices (make-array (* 2 n-verts) :element-type 'single-float))
+             (indices (make-array n-indices :element-type '(unsigned-byte 32))))
+        (loop for vt in all-vertices
+              for i from 0 by 2
+              do (setf (aref vertices i) (car vt)
+                       (aref vertices (1+ i)) (cdr vt)))
+        (loop for idx in all-indices
+              for i from 0
+              do (setf (aref indices i) idx))
+        (if depth
+            ;; Extrude to 3D
+            (let ((contour-outlines
+                    (let ((offset 0)
+                          (outlines nil))
+                      (dolist (outer-entry outers)
+                        (let* ((outer-polygon (cdr outer-entry))
+                               (n-outer (length outer-polygon))
+                               (contained-holes
+                                 (loop for hole-entry in holes
+                                       for hole-polygon = (cdr hole-entry)
+                                       for first-pt = (first hole-polygon)
+                                       when (and first-pt
+                                                 (%point-in-polygon-p (car first-pt) (cdr first-pt)
+                                                                      outer-polygon))
+                                         collect hole-polygon)))
+                          ;; Outer contour outline
+                          (push (loop for i from offset below (+ offset n-outer) collect i) outlines)
+                          ;; Hole contour outlines
+                          (let ((h-offset (+ offset n-outer)))
+                            (dolist (hole contained-holes)
+                              (push (loop for i from h-offset below (+ h-offset (length hole)) collect i)
+                                    outlines)
+                              (incf h-offset (length hole))))
+                          (incf offset (+ n-outer (reduce #'+ contained-holes :key #'length :initial-value 0)))))
+                      (nreverse outlines))))
+              (%extrude-mesh vertices indices contour-outlines depth))
+            (values vertices indices))))))
+
+(defun glyph-to-mesh-fast (font glyph-id &key (segments-per-edge 8) depth)
+  "Triangulate glyph GLYPH-ID from FONT via ear-clipping, or NIL for blank glyphs.
+Returns (VALUES vertices indices) — see SHAPE-TO-MESH-FAST for details."
+  (let ((shape (glyph-to-shape font glyph-id)))
+    (when shape
+      (shape-to-mesh-fast shape :segments-per-edge segments-per-edge :depth depth))))
 
 (defstruct shaped-glyph
   "Per-glyph shaping output from HarfBuzz."
@@ -874,6 +1041,26 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
              (when shape
                (multiple-value-bind (vertices indices)
                    (shape-to-mesh shape :segments-per-edge segments-per-edge :depth depth)
+                 (list vertices indices))))))
+    (let ((glyphs (shape-text font text
+                               :direction direction :script script :language language
+                               :alignment alignment :line-height line-height
+                               :max-width max-width :wrap wrap
+                               :fallback-fonts fallback-fonts)))
+      (%map-shaped-glyphs glyphs font #'render))))
+
+(defun text-to-meshes-fast (font text &key direction script language (segments-per-edge 8) depth
+                                          alignment line-height max-width (wrap :word)
+                                          (fallback-fonts *fallback-fonts*))
+  "Shape TEXT and triangulate each visible glyph via ear-clipping (earcut).
+Returns a list of (x y vertices indices). See SHAPE-TO-MESH-FAST for array formats.
+Supports multi-line via #\\Newline and :alignment (:left/:center/:right) / :line-height.
+MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is :word or :glyph."
+  (flet ((render (glyph-id font)
+           (let ((shape (glyph-to-shape font glyph-id)))
+             (when shape
+               (multiple-value-bind (vertices indices)
+                   (shape-to-mesh-fast shape :segments-per-edge segments-per-edge :depth depth)
                  (list vertices indices))))))
     (let ((glyphs (shape-text font text
                                :direction direction :script script :language language

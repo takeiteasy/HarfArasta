@@ -17,6 +17,7 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 
 - [ ] Add svg output for `harfarasta/export`
 - [ ] Font atlas export for `harfarasta/export`
+- [ ] Option to disable text shaping (harfbuzz)
 
 ## Quickstart
 

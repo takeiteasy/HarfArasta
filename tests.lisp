@@ -108,4 +108,10 @@ Uses FONT-PATH if given, otherwise discovers Arial."
                            :as :png :font-path path :size 48
                            :color '(200 100 255) :max-width 200 :png-size '(200 200)))
 
-      (format t "~%Done. ~D files written to ~A~%" 11 output-dir))))
+      ;; Earcut (fast mesh) OBJ export
+      (format t "12. OBJ: 'OBA' via earcut (anti-alias nil)~%")
+      (time (render-string "OBA" (out "earcut-oba.obj")
+                           :as :obj :font-path path :size 1.0 :depth 0.01
+                           :anti-alias nil))
+
+      (format t "~%Done. ~D files written to ~A~%" 12 output-dir))))

@@ -160,13 +160,14 @@
 ;;; --- OBJ export ---
 
 (defun %render-string-obj (file font text size &key depth alignment line-height fallback-fonts
-                                                    max-width (wrap :word))
+                                                    max-width (wrap :word) fast)
   "Render TEXT using FONT to a Wavefront OBJ file at FILE.
 SIZE is the scale factor applied to font-unit coordinates.
 DEPTH, when non-NIL, extrudes the mesh along Z in the same units as SIZE.
 ALIGNMENT is :left (default), :center, or :right.
 LINE-HEIGHT is the Y distance between lines in font units (default = upem).
-MAX-WIDTH triggers word wrapping in output units; WRAP is :word or :glyph."
+MAX-WIDTH triggers word wrapping in output units; WRAP is :word or :glyph.
+FAST, when T, uses ear-clipping (earcut) instead of CDT for triangulation."
   (let* ((upem (cffi:with-foreign-objects ((x :int) (y :int))
                  (hb:hb-font-get-scale font x y)
                  (cffi:mem-ref x :int)))
@@ -176,11 +177,12 @@ MAX-WIDTH triggers word wrapping in output units; WRAP is :word or :glyph."
          ;; the OBJ export multiplies by scale, z comes out correct.
          (depth-fu (when depth (/ (coerce depth 'single-float) scale)))
          (max-width-fu (when max-width (round (/ max-width scale))))
-         (meshes (rich-text:text-to-meshes font text :depth depth-fu
-                                           :alignment alignment
-                                           :line-height line-height
-                                           :max-width max-width-fu :wrap wrap
-                                           :fallback-fonts fallback-fonts))
+         (mesh-fn (if fast #'rich-text:text-to-meshes-fast #'rich-text:text-to-meshes))
+         (meshes (funcall mesh-fn font text :depth depth-fu
+                          :alignment alignment
+                          :line-height line-height
+                          :max-width max-width-fu :wrap wrap
+                          :fallback-fonts fallback-fonts))
          (global-vertex-offset 0))
     (with-open-file (out file :direction :output
                               :if-exists :supersede
@@ -233,7 +235,9 @@ MAX-WIDTH triggers automatic word wrapping; pixels for PNG, output units for OBJ
 WRAP controls the wrap mode: :word (default, break at word boundaries) or
 :glyph (break at any glyph boundary, allowing mid-word breaks).
 PNG-SIZE, when a list '(W H), fixes the canvas to exactly W x H pixels (PNG only);
-nil or :relative uses auto-fit sizing."
+nil or :relative uses auto-fit sizing.
+ANTI-ALIAS controls rendering mode: T (default) uses SDF for PNG and CDT for OBJ;
+NIL uses fast bitmap for PNG and ear-clipping (earcut) for OBJ."
   (let ((path (if font-path
                   (pathname font-path)
                   (rich-text:find-font-path :family family :weight weight))))
@@ -247,4 +251,5 @@ nil or :relative uses auto-fit sizing."
         (:obj (%render-string-obj file f text size :depth depth
                                   :alignment alignment :line-height line-height
                                   :fallback-fonts fallback-fonts
-                                  :max-width max-width :wrap wrap))))))
+                                  :max-width max-width :wrap wrap
+                                  :fast (not anti-alias)))))))
