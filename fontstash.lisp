@@ -4,6 +4,7 @@
 (defpackage #:harfarasta/fontstash
   (:nicknames #:rich-text/fontstash)
   (:use #:cl)
+  (:local-nicknames (#:hb #:harfarasta/harfbuzz))
   (:export
    #:atlas-region
    #:atlas-region-x
@@ -17,6 +18,10 @@
    #:atlas-entry-v0
    #:atlas-entry-u1
    #:atlas-entry-v1
+   #:atlas-entry-fu-x0
+   #:atlas-entry-fu-y0
+   #:atlas-entry-fu-x1
+   #:atlas-entry-fu-y1
    #:font-atlas
    #:font-atlas-width
    #:font-atlas-height
@@ -26,6 +31,8 @@
    #:atlas-add-glyph
    #:atlas-add-glyphs
    #:atlas-add-text
+   #:atlas-add-glyph-scaled
+   #:atlas-add-chars
    #:atlas-lookup
    #:atlas-to-png))
 
@@ -47,7 +54,15 @@
   (u0 0.0 :type single-float)
   (v0 0.0 :type single-float)
   (u1 0.0 :type single-float)
-  (v1 0.0 :type single-float))
+  (v1 0.0 :type single-float)
+  ;; Font-unit bounds of the rendered bitmap region (msdfgen convention).
+  ;; shape_x = (pixel_x + 0.5 + tx) / scale
+  ;; At pixel 0: fu-x0 = (0.5 + tx) / scale
+  ;; At pixel w: fu-x1 = (w + 0.5 + tx) / scale
+  (fu-x0 0.0 :type single-float)
+  (fu-y0 0.0 :type single-float)
+  (fu-x1 0.0 :type single-float)
+  (fu-y1 0.0 :type single-float))
 
 (defstruct (font-atlas (:constructor %make-font-atlas))
   "A texture atlas for packing rendered glyphs."
@@ -164,7 +179,8 @@ DST-W is the destination atlas width. CHANNELS is the number of channels."
   (ecase mode
     (:sdf (harfarasta:glyph-to-sdf font glyph-id w h))
     (:msdf (harfarasta:glyph-to-msdf font glyph-id w h))
-    (:bitmap (harfarasta:glyph-to-bitmap font glyph-id w h))))
+    (:bitmap (harfarasta:glyph-to-bitmap font glyph-id w h))
+    (:bitmap-fast (harfarasta:glyph-to-bitmap-fast font glyph-id w h))))
 
 ;;; --- Public API ---
 
@@ -268,3 +284,125 @@ Returns a list of ATLAS-ENTRY objects for the shaped glyphs."
                             for val = (round (* (max 0.0 (min 1.0 (aref data src-idx))) 255.0))
                             do (setf (aref image y x c) val))))
     (zpng:write-png png file)))
+
+;;; --- Scaled glyph atlas helpers ---
+
+(declaim (inline %smoothstep-atlas))
+(defun %smoothstep-atlas (edge0 edge1 x)
+  "Smoothstep interpolation for SDF thresholding."
+  (let ((t-val (max 0.0 (min 1.0 (/ (- x edge0) (- edge1 edge0))))))
+    (* t-val t-val (- 3.0 (* 2.0 t-val)))))
+
+(defun %render-glyph-sdf-scaled (shape scale bw bh tx ty)
+  "Render SHAPE as a 1-channel SDF coverage bitmap using explicit SCALE and translate TX/TY.
+BW and BH are the output bitmap dimensions in pixels.
+Returns a harfarasta:bitmap with per-pixel coverage values [0,1]."
+  (let* ((range (/ 2.0d0 scale))
+         (sdf (harfarasta:generate-sdf-from-shape shape bw bh
+                                                  :range range :scale scale
+                                                  :translate-x tx :translate-y ty))
+         (sdf-data (harfarasta:bitmap-data sdf))
+         (bmp (harfarasta:make-bitmap bw bh 1))
+         (bmp-data (harfarasta:bitmap-data bmp))
+         (edge-w (coerce (/ 0.5d0 (* scale range)) 'single-float)))
+    (loop for i from 0 below (length sdf-data)
+          for sd single-float = (aref sdf-data i)
+          do (setf (aref bmp-data i)
+                   (coerce (- 1.0 (%smoothstep-atlas (- 0.5 edge-w) (+ 0.5 edge-w) sd))
+                           'single-float)))
+    bmp))
+
+(defun atlas-add-glyph-scaled (atlas font glyph-id pixels-per-em &optional (padding 2))
+  "Render GLYPH-ID at PIXELS-PER-EM scale, auto-sizing the bitmap from shape bounds.
+PIXELS-PER-EM is the desired render size in pixels per em (e.g. 64).
+PADDING is the number of extra pixels around the glyph shape for SDF range (default 2).
+Stores font-unit bounds in the atlas-entry via fu-x0/y0/x1/y1.
+Returns ATLAS-ENTRY on success, or NIL if the glyph is blank or the atlas is full."
+  ;; Return existing entry if already packed
+  (let ((existing (gethash glyph-id (font-atlas-entries atlas))))
+    (when existing (return-from atlas-add-glyph-scaled existing)))
+  ;; Get the glyph outline shape
+  (let ((shape (harfarasta:glyph-to-shape font glyph-id)))
+    (when (null shape) (return-from atlas-add-glyph-scaled nil))
+    (multiple-value-bind (min-x min-y max-x max-y)
+        (harfarasta:shape-bounds shape)
+      ;; Derive upem from the HarfBuzz font scale setting
+      (let* ((upem (cffi:with-foreign-objects ((x :int) (y :int))
+                     (hb:hb-font-get-scale font x y)
+                     (cffi:mem-ref x :int)))
+             ;; pixels per font unit
+             (scale (/ (coerce pixels-per-em 'double-float)
+                       (coerce upem 'double-float)))
+             (shape-w (coerce (- max-x min-x) 'double-float))
+             (shape-h (coerce (- max-y min-y) 'double-float))
+             ;; Bitmap sized to glyph bounds plus SDF padding
+             (bw (max 4 (+ (ceiling (* shape-w scale)) (* 2 padding))))
+             (bh (max 4 (+ (ceiling (* shape-h scale)) (* 2 padding))))
+             ;; msdfgen convention: shape_x = (pixel_x + 0.5 + tx) / scale
+             ;; At pixel_x = padding, shape_x ≈ min-x:
+             ;; tx = min-x * scale - padding
+             (tx (- (* (coerce min-x 'double-float) scale)
+                    (coerce padding 'double-float)))
+             (ty (- (* (coerce min-y 'double-float) scale)
+                    (coerce padding 'double-float))))
+        ;; Render glyph bitmap; :sdf uses explicit scale, :bitmap-fast uses winding raster,
+        ;; others use auto-scale via %render-glyph
+        (let ((glyph-bmp (let ((mode (font-atlas-mode atlas)))
+                           (cond ((eq mode :sdf)
+                                  (%render-glyph-sdf-scaled shape scale bw bh tx ty))
+                                 ((eq mode :bitmap-fast)
+                                  (harfarasta:shape-to-bitmap-fast shape bw bh :padding padding))
+                                 (t (%render-glyph font glyph-id bw bh mode))))))
+          (when (null glyph-bmp) (return-from atlas-add-glyph-scaled nil))
+          (let* ((pad (font-atlas-padding atlas))
+                 (padded-w (+ bw (* 2 pad)))
+                 (padded-h (+ bh (* 2 pad))))
+            (multiple-value-bind (px py)
+                (%skyline-find-best (font-atlas-skyline atlas)
+                                    padded-w padded-h
+                                    (font-atlas-width atlas)
+                                    (font-atlas-height atlas))
+              (when (null px) (return-from atlas-add-glyph-scaled nil))
+              ;; Update skyline
+              (setf (font-atlas-skyline atlas)
+                    (%skyline-update (font-atlas-skyline atlas)
+                                     px py padded-w padded-h))
+              ;; Blit glyph bitmap into atlas at padded position
+              (let ((gx (+ px pad))
+                    (gy (+ py pad))
+                    (channels (harfarasta:bitmap-channels glyph-bmp)))
+                (%blit-bitmap (harfarasta:bitmap-data (font-atlas-bitmap atlas))
+                              gx gy (font-atlas-width atlas)
+                              (harfarasta:bitmap-data glyph-bmp)
+                              bw bh channels)
+                ;; Compute UV and font-unit bounds
+                (let* ((aw (coerce (font-atlas-width atlas) 'single-float))
+                       (ah (coerce (font-atlas-height atlas) 'single-float))
+                       (entry (make-atlas-entry
+                               :glyph-id glyph-id
+                               :region (make-atlas-region :x gx :y gy :width bw :height bh)
+                               :u0 (/ (coerce gx 'single-float) aw)
+                               :v0 (/ (coerce gy 'single-float) ah)
+                               :u1 (/ (coerce (+ gx bw) 'single-float) aw)
+                               :v1 (/ (coerce (+ gy bh) 'single-float) ah)
+                               ;; Font-unit bounds from msdfgen convention
+                               :fu-x0 (coerce (/ (+ 0.5d0 tx) scale) 'single-float)
+                               :fu-y0 (coerce (/ (+ 0.5d0 ty) scale) 'single-float)
+                               :fu-x1 (coerce (/ (+ (coerce bw 'double-float) 0.5d0 tx) scale) 'single-float)
+                               :fu-y1 (coerce (/ (+ (coerce bh 'double-float) 0.5d0 ty) scale) 'single-float))))
+                  (setf (gethash glyph-id (font-atlas-entries atlas)) entry)
+                  entry)))))))))
+
+(defun atlas-add-chars (atlas font string pixels-per-em &optional (padding 2))
+  "Shape STRING and add all unique glyphs to ATLAS at PIXELS-PER-EM scale.
+PADDING is the extra pixel border around each glyph bitmap for SDF range (default 2).
+Returns a list of ATLAS-ENTRY objects (NIL for blank or non-fitting glyphs)."
+  (let* ((shaped (harfarasta:shape-text font string))
+         (seen (make-hash-table))
+         (entries nil))
+    (dolist (sg shaped)
+      (let ((gid (harfarasta:shaped-glyph-glyph-id sg)))
+        (unless (gethash gid seen)
+          (setf (gethash gid seen) t)
+          (push (atlas-add-glyph-scaled atlas font gid pixels-per-em padding) entries))))
+    (nreverse entries)))
