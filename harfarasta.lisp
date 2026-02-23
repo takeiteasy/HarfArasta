@@ -772,17 +772,18 @@ Returns a new list; unresolved glyphs are left with glyph-id=0."
     (when start (push (subseq text start) words))
     (nreverse words)))
 
-(defun %measure-line-width (font text &key direction script language fallback-fonts)
+(defun %measure-line-width (font text &key direction script language fallback-fonts basic)
   "Return total x-advance of TEXT shaped with FONT, in font units."
   (reduce #'+ (shape-text font text
                           :direction direction
                           :script script
                           :language language
-                          :fallback-fonts (or fallback-fonts *fallback-fonts*))
+                          :fallback-fonts (or fallback-fonts *fallback-fonts*)
+                          :basic basic)
           :key #'shaped-glyph-x-advance
           :initial-value 0))
 
-(defun %wrap-paragraph (font text max-width &key direction script language fallback-fonts)
+(defun %wrap-paragraph (font text max-width &key direction script language fallback-fonts basic)
   "Greedy word-wrap a single paragraph (no #\\Newline). Returns list of line strings.
 A word wider than MAX-WIDTH is placed on its own line without splitting."
   (let ((words (%split-words text)))
@@ -798,7 +799,8 @@ A word wider than MAX-WIDTH is placed on its own line without splitting."
                                               :direction direction
                                               :script script
                                               :language language
-                                              :fallback-fonts fallback-fonts)))
+                                              :fallback-fonts fallback-fonts
+                                              :basic basic)))
               (if (and (> width max-width) current-words)
                   (progn
                     (push (format nil "~{~A~^ ~}" current-words) lines)
@@ -820,14 +822,15 @@ A word wider than MAX-WIDTH is placed on its own line without splitting."
                                       (t 4))))
           finally (return (length string)))))
 
-(defun %wrap-paragraph-glyph (font text max-width &key direction script language fallback-fonts)
+(defun %wrap-paragraph-glyph (font text max-width &key direction script language fallback-fonts basic)
   "Glyph-boundary wrapping for a single paragraph. Returns list of line strings.
 Breaks at any glyph boundary when accumulated advance would exceed MAX-WIDTH."
   (let* ((shaped (shape-text font text
                               :direction direction
                               :script script
                               :language language
-                              :fallback-fonts (or fallback-fonts *fallback-fonts*)))
+                              :fallback-fonts (or fallback-fonts *fallback-fonts*)
+                              :basic basic))
          (split-byte-offsets '())
          (current-width 0))
     (dolist (sg shaped)
@@ -850,7 +853,7 @@ Breaks at any glyph boundary when accumulated advance would exceed MAX-WIDTH."
           (push (subseq text prev) result)
           (nreverse result)))))
 
-(defun %wrap-text (font text max-width wrap &key direction script language fallback-fonts)
+(defun %wrap-text (font text max-width wrap &key direction script language fallback-fonts basic)
   "Pre-process TEXT inserting #\\Newline at wrap boundaries.
 WRAP is :word (greedy word-boundary) or :glyph (any glyph boundary).
 Hard #\\Newline in TEXT are preserved; each resulting paragraph is wrapped independently."
@@ -866,12 +869,14 @@ Hard #\\Newline in TEXT are preserved; each resulting paragraph is wrapped indep
                                                            :direction direction
                                                            :script script
                                                            :language language
-                                                           :fallback-fonts fallback-fonts))
+                                                           :fallback-fonts fallback-fonts
+                                                           :basic basic))
                                   (:glyph (%wrap-paragraph-glyph font para max-width
                                                                   :direction direction
                                                                   :script script
                                                                   :language language
-                                                                  :fallback-fonts fallback-fonts))))))
+                                                                  :fallback-fonts fallback-fonts
+                                                                  :basic basic))))))
                  (loop for line in lines
                        for first-l = t then nil
                        unless first-l do (write-char #\Newline s)
@@ -880,7 +885,8 @@ Hard #\\Newline in TEXT are preserved; each resulting paragraph is wrapped indep
 (defun shape-text (font text &key direction script language
                                alignment line-height
                                max-width (wrap :word)
-                               (fallback-fonts *fallback-fonts*))
+                               (fallback-fonts *fallback-fonts*)
+                               basic)
   "Shape TEXT using FONT via HarfBuzz. Returns a list of shaped-glyph structs.
 DIRECTION is a keyword (:ltr :rtl :ttb :btt) or NIL for auto-detection.
 SCRIPT is a 4-char tag string (e.g. \"Latn\") or NIL.
@@ -891,13 +897,16 @@ MAX-WIDTH, when non-NIL, triggers automatic line wrapping at that width in font 
 WRAP controls the wrapping mode: :word (default, break at word boundaries) or
 :glyph (break at any glyph boundary, allowing mid-word breaks).
 FALLBACK-FONTS is a list of hb_font_t pointers tried for missing glyphs.
+BASIC, when non-NIL, skips HarfBuzz shaping and maps each codepoint directly to its
+nominal glyph ID using hb_font_get_nominal_glyph and hb_font_get_glyph_h_advance.
 Unset properties are guessed by hb_buffer_guess_segment_properties.
 For multi-line TEXT (containing #\\Newline), returns a flat list that includes
 synthetic skip glyphs encoding cursor jumps; consumers use %map-shaped-glyphs."
   (let* ((effective-text (if max-width
                              (%wrap-text font text max-width wrap
                                          :direction direction :script script
-                                         :language language :fallback-fonts fallback-fonts)
+                                         :language language :fallback-fonts fallback-fonts
+                                         :basic basic)
                              text)))
   (if (find #\Newline effective-text)
       ;; Multiline path: split, shape each line, build flat list with skip glyphs
@@ -910,7 +919,8 @@ synthetic skip glyphs encoding cursor jumps; consumers use %map-shaped-glyphs."
                                                      :direction direction
                                                      :script script
                                                      :language language
-                                                     :fallback-fonts fallback-fonts)))
+                                                     :fallback-fonts fallback-fonts
+                                                     :basic basic)))
                                    lines))
              (line-widths (mapcar (lambda (glyphs)
                                     (reduce #'+ glyphs
@@ -936,8 +946,35 @@ synthetic skip glyphs encoding cursor jumps; consumers use %map-shaped-glyphs."
                  (dolist (sg glyphs) (push sg result))
                  (setf prev-end-x (+ start-x lw)))
         (nreverse result))
-      ;; Single-line path: HarfBuzz shaping (unchanged)
-      (let ((buf (hb:hb-buffer-create)))
+      ;; Single-line path
+      (if basic
+          ;; Basic: nominal glyph lookup + default h-advance; no ligatures/kerning/BiDi
+          (let ((byte-pos 0))
+            (let ((result
+                    (loop for char across effective-text
+                          for cp = (char-code char)
+                          for byte-len = (cond ((< cp #x80) 1)
+                                               ((< cp #x800) 2)
+                                               ((< cp #x10000) 3)
+                                               (t 4))
+                          for cluster = byte-pos
+                          do (incf byte-pos byte-len)
+                          collect (cffi:with-foreign-object (gid :uint32)
+                                    (let* ((found (not (zerop (hb:hb-font-get-nominal-glyph
+                                                               font cp gid))))
+                                           (glyph-id (if found (cffi:mem-ref gid :uint32) 0)))
+                                      (make-shaped-glyph
+                                       :glyph-id glyph-id
+                                       :cluster cluster
+                                       :x-advance (hb:hb-font-get-glyph-h-advance font glyph-id)
+                                       :y-advance 0
+                                       :x-offset 0
+                                       :y-offset 0))))))
+              (if fallback-fonts
+                  (%apply-fallback-fonts result effective-text fallback-fonts)
+                  result)))
+          ;; Full HarfBuzz shaping
+          (let ((buf (hb:hb-buffer-create)))
         (unwind-protect
              (progn
                (hb:hb-buffer-add-utf8 buf effective-text -1 0 -1)
@@ -983,7 +1020,7 @@ synthetic skip glyphs encoding cursor jumps; consumers use %map-shaped-glyphs."
                  (if fallback-fonts
                      (%apply-fallback-fonts result effective-text fallback-fonts)
                      result)))
-          (hb:hb-buffer-destroy buf))))))
+          (hb:hb-buffer-destroy buf)))))))
 
 (defun %map-shaped-glyphs (shaped-glyphs primary-font render-fn
                            &key (start-x 0) (start-y 0))
@@ -1031,7 +1068,7 @@ Calls RENDER-FN as per %MAP-SHAPED-GLYPHS. Returns combined result list."
 
 (defun text-to-meshes (font text &key direction script language (segments-per-edge 8) depth
                                      alignment line-height max-width (wrap :word)
-                                     (fallback-fonts *fallback-fonts*))
+                                     (fallback-fonts *fallback-fonts*) basic)
   "Shape TEXT and triangulate each visible glyph into a positioned mesh.
 Returns a list of (x y vertices indices). See SHAPE-TO-MESH for array formats.
 Supports multi-line via #\\Newline and :alignment (:left/:center/:right) / :line-height.
@@ -1046,12 +1083,12 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
                                :direction direction :script script :language language
                                :alignment alignment :line-height line-height
                                :max-width max-width :wrap wrap
-                               :fallback-fonts fallback-fonts)))
+                               :fallback-fonts fallback-fonts :basic basic)))
       (%map-shaped-glyphs glyphs font #'render))))
 
 (defun text-to-meshes-fast (font text &key direction script language (segments-per-edge 8) depth
                                           alignment line-height max-width (wrap :word)
-                                          (fallback-fonts *fallback-fonts*))
+                                          (fallback-fonts *fallback-fonts*) basic)
   "Shape TEXT and triangulate each visible glyph via ear-clipping (earcut).
 Returns a list of (x y vertices indices). See SHAPE-TO-MESH-FAST for array formats.
 Supports multi-line via #\\Newline and :alignment (:left/:center/:right) / :line-height.
@@ -1066,13 +1103,13 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
                                :direction direction :script script :language language
                                :alignment alignment :line-height line-height
                                :max-width max-width :wrap wrap
-                               :fallback-fonts fallback-fonts)))
+                               :fallback-fonts fallback-fonts :basic basic)))
       (%map-shaped-glyphs glyphs font #'render))))
 
 (defun text-to-sdfs (font text glyph-width glyph-height
                      &key direction script language (range 4.0d0) (padding 2.0)
                           alignment line-height max-width (wrap :word)
-                          (fallback-fonts *fallback-fonts*))
+                          (fallback-fonts *fallback-fonts*) basic)
   "Shape TEXT and render each visible glyph as a positioned SDF bitmap.
 Returns a list of (x y bitmap). See SHAPE-TO-SDF for bitmap format.
 Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height.
@@ -1086,13 +1123,13 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
                                :direction direction :script script :language language
                                :alignment alignment :line-height line-height
                                :max-width max-width :wrap wrap
-                               :fallback-fonts fallback-fonts)))
+                               :fallback-fonts fallback-fonts :basic basic)))
       (%map-shaped-glyphs glyphs font #'render))))
 
 (defun text-to-msdfs (font text glyph-width glyph-height
                       &key direction script language (range 4.0d0) (padding 2.0)
                            alignment line-height max-width (wrap :word)
-                           (fallback-fonts *fallback-fonts*))
+                           (fallback-fonts *fallback-fonts*) basic)
   "Shape TEXT and render each visible glyph as a positioned MSDF bitmap.
 Returns a list of (x y bitmap). See SHAPE-TO-MSDF for bitmap format.
 Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height.
@@ -1106,7 +1143,7 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
                                :direction direction :script script :language language
                                :alignment alignment :line-height line-height
                                :max-width max-width :wrap wrap
-                               :fallback-fonts fallback-fonts)))
+                               :fallback-fonts fallback-fonts :basic basic)))
       (%map-shaped-glyphs glyphs font #'render))))
 
 
@@ -1148,7 +1185,7 @@ EDGE-WIDTH controls anti-aliasing sharpness; NIL auto-computes ~1px of AA."
 (defun text-to-bitmaps (font text glyph-width glyph-height
                         &key direction script language (range 4.0d0) (padding 2.0) (edge-width nil)
                              alignment line-height max-width (wrap :word)
-                             (fallback-fonts *fallback-fonts*))
+                             (fallback-fonts *fallback-fonts*) basic)
   "Shape TEXT and render each visible glyph as a positioned anti-aliased bitmap.
 Returns a list of (x y bitmap). See SHAPE-TO-BITMAP for bitmap format.
 Supports multi-line via #\Newline and :alignment (:left/:center/:right) / :line-height.
@@ -1163,7 +1200,7 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
                                :direction direction :script script :language language
                                :alignment alignment :line-height line-height
                                :max-width max-width :wrap wrap
-                               :fallback-fonts fallback-fonts)))
+                               :fallback-fonts fallback-fonts :basic basic)))
       (%map-shaped-glyphs glyphs font #'render))))
 
 ;;;; ——— Fast (no-AA) bitmap rendering ———
@@ -1195,7 +1232,7 @@ Pixels are 1.0 (inside) or 0.0 (outside). Faster than SHAPE-TO-BITMAP."
 (defun text-to-bitmaps-fast (font text glyph-width glyph-height
                              &key direction script language (padding 2.0)
                                   alignment line-height max-width (wrap :word)
-                                  (fallback-fonts *fallback-fonts*))
+                                  (fallback-fonts *fallback-fonts*) basic)
   "Shape TEXT and render each visible glyph as a positioned binary bitmap.
 Returns a list of (x y bitmap). No anti-aliasing; pixels are 1.0 or 0.0.
 See SHAPE-TO-BITMAP-FAST for bitmap format."
@@ -1208,7 +1245,7 @@ See SHAPE-TO-BITMAP-FAST for bitmap format."
                                :direction direction :script script :language language
                                :alignment alignment :line-height line-height
                                :max-width max-width :wrap wrap
-                               :fallback-fonts fallback-fonts)))
+                               :fallback-fonts fallback-fonts :basic basic)))
       (%map-shaped-glyphs glyphs font #'render))))
 
 ;;;; ——— shape-text-lines ———
@@ -1216,7 +1253,8 @@ See SHAPE-TO-BITMAP-FAST for bitmap format."
 (defun shape-text-lines (font text &key direction script language
                                         alignment line-height
                                         max-width (wrap :word)
-                                        (fallback-fonts *fallback-fonts*))
+                                        (fallback-fonts *fallback-fonts*)
+                                        basic)
   "Shape multi-line TEXT. Returns a list of plists (:y y-offset :x x-offset :glyphs shaped-glyphs).
 Text is split on #\Newline; y-offsets are stacked by LINE-HEIGHT (default = upem).
 ALIGNMENT is :left (default), :center, or :right.
@@ -1224,7 +1262,8 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
   (let* ((effective-text (if max-width
                              (%wrap-text font text max-width wrap
                                          :direction direction :script script
-                                         :language language :fallback-fonts fallback-fonts)
+                                         :language language :fallback-fonts fallback-fonts
+                                         :basic basic)
                              text))
          (lines (if (find #\Newline effective-text)
                     (%split-lines effective-text)
@@ -1236,7 +1275,8 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
                                      (shape-text font line
                                                  :direction direction :script script
                                                  :language language
-                                                 :fallback-fonts fallback-fonts)))
+                                                 :fallback-fonts fallback-fonts
+                                                 :basic basic)))
                                lines))
          (line-widths (mapcar (lambda (glyphs)
                                 (reduce #'+ glyphs :key #'shaped-glyph-x-advance
@@ -1259,7 +1299,8 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
                                     alignment line-height
                                     max-width (wrap :word)
                                     depth
-                                    (fallback-fonts *fallback-fonts*))
+                                    (fallback-fonts *fallback-fonts*)
+                                    basic)
   "Calculate the ink bounding box of TEXT shaped with FONT, without rendering.
 All values are in font units. Coordinates follow OBJ/3D convention: X rightward,
 Y upward, baseline at Y=0. For multi-line text, lines stack downward from the first.
@@ -1272,7 +1313,7 @@ When the text contains no visible glyphs, returns (VALUES 0 0) or all zeros."
                              :direction direction :script script :language language
                              :alignment alignment :line-height line-height
                              :max-width max-width :wrap wrap
-                             :fallback-fonts fallback-fonts))
+                             :fallback-fonts fallback-fonts :basic basic))
         (cursor-x 0)
         (cursor-y 0)
         (ink-min-x nil)

@@ -245,11 +245,12 @@ Returns an ATLAS-ENTRY on success, or NIL if the glyph is blank or doesn't fit."
 Returns a list of ATLAS-ENTRY objects (NIL entries for blank glyphs)."
   (mapcar (lambda (gid) (atlas-add-glyph atlas font gid w h)) glyph-ids))
 
-(defun atlas-add-text (atlas font text w h &key direction script language)
+(defun atlas-add-text (atlas font text w h &key direction script language basic)
   "Shape TEXT with FONT and add all unique glyphs to ATLAS at size W x H.
 Returns a list of ATLAS-ENTRY objects for the shaped glyphs."
   (let* ((shaped (harfarasta:shape-text font text :direction direction
-                                                   :script script :language language))
+                                                   :script script :language language
+                                                   :basic basic))
          (seen (make-hash-table))
          (entries nil))
     (dolist (sg shaped)
@@ -393,11 +394,11 @@ Returns ATLAS-ENTRY on success, or NIL if the glyph is blank or the atlas is ful
                   (setf (gethash glyph-id (font-atlas-entries atlas)) entry)
                   entry)))))))))
 
-(defun atlas-add-chars (atlas font string pixels-per-em &optional (padding 2))
+(defun atlas-add-chars (atlas font string pixels-per-em &key (padding 2) basic)
   "Shape STRING and add all unique glyphs to ATLAS at PIXELS-PER-EM scale.
 PADDING is the extra pixel border around each glyph bitmap for SDF range (default 2).
 Returns a list of ATLAS-ENTRY objects (NIL for blank or non-fitting glyphs)."
-  (let* ((shaped (harfarasta:shape-text font string))
+  (let* ((shaped (harfarasta:shape-text font string :basic basic))
          (seen (make-hash-table))
          (entries nil))
     (dolist (sg shaped)

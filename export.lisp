@@ -14,7 +14,7 @@
 
 (defun %render-string-png (file font text pixel-height color
                            &key (alignment :left) fallback-fonts line-height
-                                max-width (wrap :word) png-size (anti-alias t))
+                                max-width (wrap :word) png-size (anti-alias t) basic)
   "Render TEXT using FONT to a PNG file at FILE."
   (let* ((upem (cffi:with-foreign-objects ((x :int) (y :int))
                  (hb:hb-font-get-scale font x y)
@@ -27,7 +27,8 @@
                                        :alignment alignment
                                        :line-height line-height
                                        :max-width max-width-fu :wrap wrap
-                                       :fallback-fonts fallback-fonts))
+                                       :fallback-fonts fallback-fonts
+                                       :basic basic))
          ;; Build glyph-data: (pen-x pen-y shape gid)
          ;; pen-x, pen-y in font units; pen-y is Y-down positive (0 = first line)
          (shape-cache (make-hash-table :test 'equal))
@@ -160,7 +161,7 @@
 ;;; --- OBJ export ---
 
 (defun %render-string-obj (file font text size &key depth alignment line-height fallback-fonts
-                                                    max-width (wrap :word) fast)
+                                                    max-width (wrap :word) fast basic)
   "Render TEXT using FONT to a Wavefront OBJ file at FILE.
 SIZE is the scale factor applied to font-unit coordinates.
 DEPTH, when non-NIL, extrudes the mesh along Z in the same units as SIZE.
@@ -182,7 +183,8 @@ FAST, when T, uses ear-clipping (earcut) instead of CDT for triangulation."
                           :alignment alignment
                           :line-height line-height
                           :max-width max-width-fu :wrap wrap
-                          :fallback-fonts fallback-fonts))
+                          :fallback-fonts fallback-fonts
+                          :basic basic))
          (global-vertex-offset 0))
     (with-open-file (out file :direction :output
                               :if-exists :supersede
@@ -221,7 +223,7 @@ FAST, when T, uses ear-clipping (earcut) instead of CDT for triangulation."
                                      (color '(255 255 255)) depth (alignment :left)
                                      line-height fallback-fonts
                                      max-width (wrap :word) png-size
-                                     (anti-alias t))
+                                     (anti-alias t) basic)
   "Render TEXT to FILE in the specified format.
 AS is :png or :obj.
 Font can be specified by FONT-PATH or by FAMILY/WEIGHT for discovery.
@@ -237,7 +239,9 @@ WRAP controls the wrap mode: :word (default, break at word boundaries) or
 PNG-SIZE, when a list '(W H), fixes the canvas to exactly W x H pixels (PNG only);
 nil or :relative uses auto-fit sizing.
 ANTI-ALIAS controls rendering mode: T (default) uses SDF for PNG and CDT for OBJ;
-NIL uses fast bitmap for PNG and ear-clipping (earcut) for OBJ."
+NIL uses fast bitmap for PNG and ear-clipping (earcut) for OBJ.
+BASIC, when non-NIL, skips HarfBuzz shaping and maps each codepoint directly to its
+nominal glyph ID (no ligatures, kerning, or BiDi)."
   (let ((path (if font-path
                   (pathname font-path)
                   (rich-text:find-font-path :family family :weight weight))))
@@ -247,9 +251,9 @@ NIL uses fast bitmap for PNG and ear-clipping (earcut) for OBJ."
                                   :alignment alignment :fallback-fonts fallback-fonts
                                   :line-height line-height :max-width max-width
                                   :wrap wrap :png-size png-size
-                                  :anti-alias anti-alias))
+                                  :anti-alias anti-alias :basic basic))
         (:obj (%render-string-obj file f text size :depth depth
                                   :alignment alignment :line-height line-height
                                   :fallback-fonts fallback-fonts
                                   :max-width max-width :wrap wrap
-                                  :fast (not anti-alias)))))))
+                                  :fast (not anti-alias) :basic basic))))))

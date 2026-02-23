@@ -4,11 +4,11 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 
 ## Features
 
-- **HarfBuzz text shaping** -- full OpenType layout (ligatures, kerning, BiDi, script/language support)
+- **HarfBuzz text shaping** -- full OpenType layout (ligatures, kerning, BiDi, script/language support) (optional `:basic`)
 - **Glyph outline extraction** -- convert glyph outlines to vector shapes
 - **M/SDF rendering** -- multi-channel and single-channel signed distance fields
-- **Bitmap rendering** -- anti-aliased grayscale coverage bitmaps via SDF thresholding by default, fast direct rendering optionally
-- **Mesh generation** -- constrained Delaunay triangulation of glyph outlines
+- **Bitmap rendering** -- anti-aliased grayscale coverage bitmaps via SDF thresholding by default, fast direct rendering optionally (`:anti-alias` or `:fast`)
+- **Mesh generation** -- constrained Delaunay triangulation of glyph outlines or earcut (`:fast`)
 - **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `harfarasta/export`)
 - **Extra shaping** -- automatic line breaking at a configurable max width (word or glyph boundary modes), newline support and alignment.
 - **WOFF1/WOFF2** -- Web Open Font Format 1.0/2.0
@@ -17,7 +17,6 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 
 - [ ] Add svg output for `harfarasta/export`
 - [ ] Font atlas export for `harfarasta/export`
-- [ ] Option to disable text shaping (harfbuzz)
 
 ## Quickstart
 
