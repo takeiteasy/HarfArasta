@@ -352,7 +352,7 @@ Returns ATLAS-ENTRY on success, or NIL if the glyph is blank or the atlas is ful
                            (cond ((eq mode :sdf)
                                   (%render-glyph-sdf-scaled shape scale bw bh tx ty))
                                  ((eq mode :bitmap-fast)
-                                  (harfarasta:shape-to-bitmap-fast shape bw bh :padding padding))
+                                  (harfarasta:shape-to-bitmap-fast shape bw bh :scale scale :tx tx :ty ty))
                                  (t (%render-glyph font glyph-id bw bh mode))))))
           (when (null glyph-bmp) (return-from atlas-add-glyph-scaled nil))
           (let* ((pad (font-atlas-padding atlas))

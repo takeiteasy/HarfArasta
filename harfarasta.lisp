@@ -1205,23 +1205,26 @@ MAX-WIDTH triggers automatic word wrapping at that width in font units; WRAP is 
 
 ;;;; ——— Fast (no-AA) bitmap rendering ———
 
-(defun shape-to-bitmap-fast (shape width height &key (padding 2.0))
+(defun shape-to-bitmap-fast (shape width height &key (padding 2.0) scale tx ty)
   "Render SHAPE to a 1-channel binary bitmap of WIDTH x HEIGHT pixels.
 Uses direct winding-number rasterization — no SDF, no anti-aliasing.
-Pixels are 1.0 (inside) or 0.0 (outside). Faster than SHAPE-TO-BITMAP."
-  (multiple-value-bind (scale tx ty)
-      (auto-scale-shape shape width height :padding padding)
-    (let* ((bmp (make-bitmap width height 1))
-           (bmp-data (bitmap-data bmp)))
-      (loop for y fixnum from 0 below height
-            do (loop for x fixnum from 0 below width
-                     for px single-float = (coerce (/ (+ x 0.5d0 tx) scale) 'single-float)
-                     for py single-float = (coerce (/ (+ y 0.5d0 ty) scale) 'single-float)
-                     do (setf (aref bmp-data (+ x (* y width)))
-                              (if (zerop (%shape-winding-at shape px py))
-                                  0.0
-                                  1.0))))
-      bmp)))
+Pixels are 1.0 (inside) or 0.0 (outside). Faster than SHAPE-TO-BITMAP.
+When SCALE, TX and TY are supplied they override the internal auto-scale."
+  (unless (and scale tx ty)
+    (multiple-value-bind (s xt yt)
+        (auto-scale-shape shape width height :padding padding)
+      (setq scale s tx xt ty yt)))
+  (let* ((bmp (make-bitmap width height 1))
+         (bmp-data (bitmap-data bmp)))
+    (loop for y fixnum from 0 below height
+          do (loop for x fixnum from 0 below width
+                   for px single-float = (coerce (/ (+ x 0.5d0 tx) scale) 'single-float)
+                   for py single-float = (coerce (/ (+ y 0.5d0 ty) scale) 'single-float)
+                   do (setf (aref bmp-data (+ x (* y width)))
+                            (if (zerop (%shape-winding-at shape px py))
+                                0.0
+                                1.0))))
+    bmp))
 
 (defun glyph-to-bitmap-fast (font glyph-id width height &key (padding 2.0))
   "Render glyph GLYPH-ID from FONT as a 1-channel binary bitmap, or NIL for blank glyphs."
