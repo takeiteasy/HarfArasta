@@ -25,14 +25,13 @@
   :version "0.1.0"
   :depends-on (#:harfarasta/harfbuzz
                #:harfarasta/woff2
-               #:font-discovery)
+               #:font-discovery
+               #:common-shapes)
   :serial t
   :components ((:file "package")
                (:file "inflate")
                (:file "woff")
                (:file "types")
-               (:file "delaunay")
-               (:file "earcut")
                (:file "edge-coloring")
                (:file "math")
                (:file "distance")

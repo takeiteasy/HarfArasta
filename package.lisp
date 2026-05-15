@@ -4,7 +4,8 @@
   (:nicknames #:rich-text)
   (:use #:cl)
   (:local-nicknames (#:hb #:harfarasta/harfbuzz)
-                    (#:woff2 #:harfarasta/woff2))
+                     (#:woff2 #:harfarasta/woff2)
+                     (#:cs #:common-shapes))
   (:export
    #:glyph-to-shape
    #:with-font

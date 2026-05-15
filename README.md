@@ -8,7 +8,7 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 - **Glyph outline extraction** -- convert glyph outlines to vector shapes
 - **M/SDF rendering** -- multi-channel and single-channel signed distance fields
 - **Bitmap rendering** -- anti-aliased grayscale coverage bitmaps via SDF thresholding by default, fast direct rendering optionally (`:anti-alias` or `:fast`)
-- **Mesh generation** -- constrained Delaunay triangulation of glyph outlines or earcut (`:fast`)
+- **Mesh generation** -- constrained Delaunay triangulation of glyph outlines or earcut (`:fast`) (via `common-shapes`)
 - **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `harfarasta/export`)
 - **Extra shaping** -- automatic line breaking at a configurable max width (word or glyph boundary modes), newline support and alignment.
 - **WOFF1/WOFF2** -- Web Open Font Format 1.0/2.0
@@ -94,6 +94,7 @@ mkdir -p build && cd build && cmake .. && make
 - [harfbuzz](https://github.com/harfbuzz/harfbuzz) -- text shaping engine (C shared library, built via CMake)
 - [woff2](https://github.com/google/woff2) -- WOFF2 decoder (C shared library, built via CMake)
 - [font-discovery](https://shinmera.com/project/font-discovery) -- system font lookup
+- [common-shapes](https://git.sr.ht/~takeiteasy/common-shapes) -- polygon & constrained Delaunay triangulation for mesh generation
 - [zpng](https://www.xach.com/lisp/zpng/) -- PNG export (`harfarasta/export` only)
 
 ## Export Package
