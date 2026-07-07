@@ -5,7 +5,8 @@
   (:use #:cl)
   (:local-nicknames (#:hb #:harfarasta/harfbuzz)
                      (#:woff2 #:harfarasta/woff2)
-                     (#:cs #:common-shapes))
+                     (#:earcut #:cl-earcut)
+                     (#:cdt #:cl-constrained-delaunay))
   (:export
    #:glyph-to-shape
    #:with-font

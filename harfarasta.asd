@@ -26,7 +26,8 @@
   :depends-on (#:harfarasta/harfbuzz
                #:harfarasta/woff2
                #:font-discovery
-               #:common-shapes)
+               #:cl-earcut
+               #:cl-constrained-delaunay)
   :serial t
   :components ((:file "package")
                (:file "inflate")

@@ -389,7 +389,7 @@ and back face at z=DEPTH, with side walls connecting the contour edges."
           (when (> py max-y) (setf max-y py)))))
     ;; Add margin
     (let* ((margin (* 0.1 (max (- max-x min-x) (- max-y min-y) 1.0)))
-            (ctx (cs:make-context :bounds (list (list (- min-x margin) (- min-y margin))
+            (ctx (cdt:make-context :bounds (list (list (- min-x margin) (- min-y margin))
                                                 (list (+ max-x margin) (+ max-y margin)))))
            (constraint-id 0))
       ;; Insert contour edges as constraints
@@ -398,12 +398,12 @@ and back face at z=DEPTH, with side walls connecting the contour edges."
           (loop for i from 0 below n
                 for p1 = (nth i polygon)
                 for p2 = (nth (mod (1+ i) n) polygon)
-                 do (cs:insert-constraint ctx
+                 do (cdt:insert-constraint ctx
                                           (car p1) (cdr p1)
                                           (car p2) (cdr p2)
                                           :id (incf constraint-id)))))
       ;; Get triangles and filter interior ones
-       (let* ((triangles (cs:get-triangles ctx
+       (let* ((triangles (cdt:get-triangles ctx
                                             :exclude-super-triangle t
                                             :as-points t))
              (interior-tris
@@ -581,7 +581,7 @@ When DEPTH is a number, the mesh is extruded along Z."
                                (aref flat-coords (1+ (* i 2))) (coerce (cdr pt) 'single-float)))
                 (incf offset (length hole))))
             ;; Triangulate
-            (let ((tri-indices (cs:earcut flat-coords hole-starts)))
+            (let ((tri-indices (earcut:earcut flat-coords hole-starts)))
               (when (> (length tri-indices) 0)
                 ;; Remap indices to global vertex space
                 (loop for i from 0 below (length tri-indices)
