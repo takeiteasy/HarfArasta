@@ -2,9 +2,98 @@
 
 (defpackage #:harfarasta/tests
   (:use #:cl #:harfarasta #:harfarasta/export)
-  (:export #:render-tests))
+  (:local-nicknames (#:cs #:common-shapes)
+                     (#:hmesh #:harfarasta/mesh))
+  (:export #:render-tests #:mesh-tests))
 
 (in-package #:harfarasta/tests)
+
+(defun %glyph-id-for-char (font char)
+  "Shape a single-character string with FONT and return its glyph ID."
+  (rich-text:shaped-glyph-glyph-id (first (rich-text:shape-text font (string char)))))
+
+(defun %signed-area-2d (vertices i0 i1 i2)
+  "Signed area of the triangle formed by 2D vertex indices I0/I1/I2 in the
+flat, stride-2 VERTICES array. Positive = counter-clockwise."
+  (let ((x0 (aref vertices (* i0 2))) (y0 (aref vertices (1+ (* i0 2))))
+        (x1 (aref vertices (* i1 2))) (y1 (aref vertices (1+ (* i1 2))))
+        (x2 (aref vertices (* i2 2))) (y2 (aref vertices (1+ (* i2 2)))))
+    (/ (- (* (- x1 x0) (- y2 y0))
+          (* (- x2 x0) (- y1 y0)))
+       2.0)))
+
+(defun mesh-tests (&key font-path)
+  "Exercise harfarasta/mesh: build glyph and text meshes and assert they are
+well-formed COMMON-SHAPES:MESH objects with the expected array types,
+dimensions, and (for 2D) counter-clockwise winding."
+  (let ((path (or (and font-path (pathname font-path))
+                  (rich-text:find-font-path :family "Arial"))))
+    (format t "~%=== harfarasta/mesh tests ===~%")
+    (format t "Font: ~A~%~%" path)
+    (rich-text:with-font (font path)
+      ;; 1. Single glyph, 2D
+      (format t "1. glyph-mesh: 'A' at size 64, 2D~%")
+      (let* ((glyph-id (%glyph-id-for-char font #\A))
+             (mesh (hmesh:glyph-mesh font glyph-id :size 64)))
+        (assert (cs:mesh-p mesh) () "glyph-mesh did not return a common-shapes mesh")
+        (assert (typep (cs:mesh-vertices mesh) '(simple-array single-float (*))) ()
+                "glyph-mesh vertices have the wrong array type")
+        (assert (typep (cs:mesh-indices mesh) '(simple-array (unsigned-byte 32) (*))) ()
+                "glyph-mesh indices have the wrong array type")
+        (assert (= (cs:mesh-dimensions mesh) 2) () "2D glyph-mesh should have dimensions 2")
+        (assert (plusp (cs:vertex-count mesh)) () "glyph-mesh has no vertices")
+        (assert (plusp (cs:triangle-count mesh)) () "glyph-mesh has no triangles")
+        (assert (>= (%signed-area-2d (cs:mesh-vertices mesh)
+                                      (aref (cs:mesh-indices mesh) 0)
+                                      (aref (cs:mesh-indices mesh) 1)
+                                      (aref (cs:mesh-indices mesh) 2))
+                    0.0)
+                () "glyph-mesh triangle winding is not counter-clockwise")
+        (format t "   vertices=~D triangles=~D dimensions=~D~%"
+                (cs:vertex-count mesh) (cs:triangle-count mesh) (cs:mesh-dimensions mesh)))
+
+      ;; 2. Single glyph, 2D, with normals
+      (format t "2. glyph-mesh: 'A' at size 64, with :normals t~%")
+      (let* ((glyph-id (%glyph-id-for-char font #\A))
+             (mesh (hmesh:glyph-mesh font glyph-id :size 64 :normals t)))
+        (assert (typep (cs:mesh-normals mesh) '(simple-array single-float (*))) ()
+                "glyph-mesh with :normals t should have a normals array")
+        (assert (= (length (cs:mesh-normals mesh)) (* (cs:vertex-count mesh) 3)) ()
+                "glyph-mesh normals array has the wrong length"))
+
+      ;; 3. Single glyph, extruded (3D)
+      (format t "3. glyph-mesh: 'A' at size 64, :depth 0.1 (3D)~%")
+      (let* ((glyph-id (%glyph-id-for-char font #\A))
+             (mesh (hmesh:glyph-mesh font glyph-id :size 64 :depth 0.1)))
+        (assert (= (cs:mesh-dimensions mesh) 3) () "extruded glyph-mesh should have dimensions 3")
+        (assert (null (cs:mesh-normals mesh)) ()
+                "extruded glyph-mesh should not get normals from glyph-mesh")
+        (format t "   vertices=~D triangles=~D dimensions=~D~%"
+                (cs:vertex-count mesh) (cs:triangle-count mesh) (cs:mesh-dimensions mesh)))
+
+      ;; 4. Per-glyph text meshes vs merged text mesh
+      (format t "4. text-meshes / text-mesh: 'Hi' at size 64~%")
+      (let* ((per-glyph (hmesh:text-meshes font "Hi" :size 64))
+             (merged (hmesh:text-mesh font "Hi" :size 64))
+             (sum-verts (reduce #'+ per-glyph :key #'cs:vertex-count :initial-value 0))
+             (sum-tris (reduce #'+ per-glyph :key #'cs:triangle-count :initial-value 0)))
+        (assert (= (length per-glyph) 2) () "text-meshes should return one mesh per glyph")
+        (dolist (m per-glyph)
+          (assert (cs:mesh-p m) () "text-meshes entry is not a common-shapes mesh"))
+        (assert (= (cs:vertex-count merged) sum-verts) ()
+                "merged text-mesh vertex count should equal sum of per-glyph vertex counts")
+        (assert (= (cs:triangle-count merged) sum-tris) ()
+                "merged text-mesh triangle count should equal sum of per-glyph triangle counts")
+        (format t "   per-glyph: ~D meshes, merged: vertices=~D triangles=~D~%"
+                (length per-glyph) (cs:vertex-count merged) (cs:triangle-count merged)))
+
+      ;; 5. Earcut (fast) path
+      (format t "5. glyph-mesh: 'A' at size 64, :fast t (earcut)~%")
+      (let* ((glyph-id (%glyph-id-for-char font #\A))
+             (mesh (hmesh:glyph-mesh font glyph-id :size 64 :fast t)))
+        (assert (plusp (cs:triangle-count mesh)) () "fast glyph-mesh has no triangles")))
+
+    (format t "~%harfarasta/mesh tests passed.~%")))
 
 (defun render-tests (&key (output-dir (asdf:system-relative-pathname :harfarasta "tests/"))
                           font-path)

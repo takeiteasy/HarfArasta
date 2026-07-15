@@ -58,8 +58,17 @@
   :serial t
   :components ((:file "export")))
 
+(asdf:defsystem #:harfarasta/mesh
+  :description "common-shapes mesh integration for harfarasta"
+  :author "George Watson <gigolo@hotmail.co.uk>"
+  :license "GPLv3"
+  :version "0.1.0"
+  :depends-on (#:harfarasta #:common-shapes)
+  :serial t
+  :components ((:file "mesh")))
+
 (asdf:defsystem #:harfarasta/tests
   :description "Tests for harfarasta"
-  :depends-on (#:harfarasta/export #:harfarasta/fontstash)
+  :depends-on (#:harfarasta/export #:harfarasta/fontstash #:harfarasta/mesh)
   :serial t
   :components ((:file "tests")))

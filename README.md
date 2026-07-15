@@ -8,8 +8,9 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 - **Glyph outline extraction** -- convert glyph outlines to vector shapes
 - **M/SDF rendering** -- multi-channel and single-channel signed distance fields
 - **Bitmap rendering** -- anti-aliased grayscale coverage bitmaps via SDF thresholding by default, fast direct rendering optionally (`:anti-alias` or `:fast`)
-- **Mesh generation** -- constrained Delaunay triangulation of glyph outlines or earcut (`:fast`) (via `common-shapes`)
+- **Mesh generation** -- constrained Delaunay triangulation of glyph outlines (via `cl-constrained-delaunay`) or ear-clipping (`:fast`, via `cl-earcut`)
 - **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `harfarasta/export`)
+- **common-shapes integration** -- glyph and text meshes as `common-shapes:mesh` objects for composing with `common-shapes` generators, CSG, and transforms (via `harfarasta/mesh`)
 - **Extra shaping** -- automatic line breaking at a configurable max width (word or glyph boundary modes), newline support and alignment.
 - **WOFF1/WOFF2** -- Web Open Font Format 1.0/2.0
 
@@ -86,7 +87,8 @@ mkdir -p build && cd build && cmake .. && make
 | `harfarasta/harfbuzz` | Internal CFFI bindings to HarfBuzz |
 | `harfarasta/woff2` | Internal CFFI bindings to libwoff2shim for WOFF2 decoding |
 | `harfarasta/export` | PNG and OBJ export utilities |
-| `harfarasta/tests` | Tests using `harfarasta/export` |
+| `harfarasta/mesh` | `common-shapes:mesh` integration for glyph/text meshes |
+| `harfarasta/tests` | Tests using `harfarasta/export` and `harfarasta/mesh` |
 
 ## Dependencies
 
@@ -94,7 +96,9 @@ mkdir -p build && cd build && cmake .. && make
 - [harfbuzz](https://github.com/harfbuzz/harfbuzz) -- text shaping engine (C shared library, built via CMake)
 - [woff2](https://github.com/google/woff2) -- WOFF2 decoder (C shared library, built via CMake)
 - [font-discovery](https://shinmera.com/project/font-discovery) -- system font lookup
-- [common-shapes](https://git.sr.ht/~takeiteasy/common-shapes) -- polygon & constrained Delaunay triangulation for mesh generation
+- [cl-earcut](https://git.sr.ht/~takeiteasy/cl-earcut) -- ear-clipping triangulation (`:fast` mesh generation)
+- [cl-constrained-delaunay](https://git.sr.ht/~takeiteasy/cl-constrained-delaunay) -- constrained Delaunay triangulation (default mesh generation)
+- [common-shapes](https://git.sr.ht/~takeiteasy/common-shapes) -- mesh data structure & shape/CSG interop (`harfarasta/mesh` only)
 - [zpng](https://www.xach.com/lisp/zpng/) -- PNG export (`harfarasta/export` only)
 
 ## Export Package
@@ -140,6 +144,47 @@ mkdir -p build && cd build && cmake .. && make
 | `:wrap` | `:word` | `:word` — break at word boundaries (default); `:glyph` — break at any glyph |
 | `:png-size` | `nil` | `'(W H)` for a fixed canvas size, or `nil` for auto-fit (PNG only) 
 | `:anti-alias` | `t` | When `nil`, renderer will skip smoothstep and SDF steps |
+
+## Mesh Package
+
+`harfarasta/mesh` converts glyph and text geometry into
+[`common-shapes:mesh`](https://git.sr.ht/~takeiteasy/common-shapes) objects, so glyph
+meshes compose with `common-shapes`' generators, CSG operations, and matrix transforms.
+
+```lisp
+(ql:quickload :harfarasta/mesh)
+
+(rich-text:with-font (font "/path/to/font.ttf")
+  ;; A single glyph as a common-shapes:mesh
+  (let* ((glyph-id (rich-text:shaped-glyph-glyph-id
+                     (first (rich-text:shape-text font "A"))))
+         (mesh (rich-text/mesh:glyph-mesh font glyph-id :size 64)))
+    (format t "verts=~D tris=~D~%"
+            (common-shapes:vertex-count mesh)
+            (common-shapes:triangle-count mesh)))
+
+  ;; Per-glyph meshes, positioned along the baseline
+  (dolist (mesh (rich-text/mesh:text-meshes font "Hi" :size 64))
+    (format t "verts=~D~%" (common-shapes:vertex-count mesh)))
+
+  ;; One merged mesh for the whole string
+  (let ((mesh (rich-text/mesh:text-mesh font "Hi" :size 64 :depth 0.1)))
+    (format t "merged verts=~D tris=~D dims=~D~%"
+            (common-shapes:vertex-count mesh)
+            (common-shapes:triangle-count mesh)
+            (common-shapes:mesh-dimensions mesh))))
+```
+
+- `glyph-mesh`, `text-meshes`, and `text-mesh` share `:size` (scale factor, default 64),
+  `:depth` (extrudes to a 3D mesh, `nil` = flat 2D), `:fast` (earcut instead of constrained
+  Delaunay), and `:normals` (fills flat `+Z` normals on 2D meshes only -- extruded meshes
+  are left without normals, since `common-shapes:compute-normals` would smooth across the
+  hard front/back/side-wall seams).
+- Coordinates match `harfarasta/export`'s OBJ output: `scale = size / units-per-em`, glyph
+  advance/pen offsets are baked in, and Y is flipped from font-unit Y-down to +Y-up.
+- Triangle winding is counter-clockwise, as `common-shapes` expects.
+- `text-meshes` returns one mesh per glyph (useful for per-letter transforms/animation);
+  `text-mesh` returns a single mesh with all glyphs merged into one vertex/index namespace.
 
 ## License
 
