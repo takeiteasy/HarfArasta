@@ -19,6 +19,17 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 - [ ] Add svg output for `harfarasta/export`
 - [ ] Font atlas export for `harfarasta/export`
 
+## Documentation
+
+| Doc | Covers |
+|-----|--------|
+| [`docs/shaping.md`](docs/shaping.md) | Font loading/lifecycle, HarfBuzz shaping, word wrap, font inspection, fallback fonts, WOFF1/WOFF2 |
+| [`docs/rendering.md`](docs/rendering.md) | SDF, MSDF, and bitmap glyph rendering |
+| [`docs/triangulation.md`](docs/triangulation.md) | Core glyph-to-mesh triangulation (constrained Delaunay / earcut) |
+| [`docs/mesh.md`](docs/mesh.md) | `harfarasta/mesh` -- `common-shapes:mesh` integration |
+| [`docs/export.md`](docs/export.md) | `harfarasta/export` -- `render-string` for PNG/OBJ output |
+| [`docs/fontstash.md`](docs/fontstash.md) | `harfarasta/fontstash` -- texture atlas / glyph packing |
+
 ## Quickstart
 
 ```lisp
@@ -88,7 +99,8 @@ mkdir -p build && cd build && cmake .. && make
 | `harfarasta/woff2` | Internal CFFI bindings to libwoff2shim for WOFF2 decoding |
 | `harfarasta/export` | PNG and OBJ export utilities |
 | `harfarasta/mesh` | `common-shapes:mesh` integration for glyph/text meshes |
-| `harfarasta/tests` | Tests using `harfarasta/export` and `harfarasta/mesh` |
+| `harfarasta/fontstash` | Font atlas / glyph packing for GPU text rendering |
+| `harfarasta/tests` | Tests using `harfarasta/export`, `harfarasta/mesh`, and `harfarasta/fontstash` |
 
 ## Dependencies
 
@@ -103,88 +115,33 @@ mkdir -p build && cd build && cmake .. && make
 
 ## Export Package
 
-`harfarasta/export` provides a simple interface to render strings directly to PNG images or Wavefront OBJ mesh files.
+`harfarasta/export` provides `render-string`, a single entry point to render
+text directly to a PNG image or a Wavefront OBJ mesh file. See
+[`docs/export.md`](docs/export.md) for the full parameter reference and
+examples.
 
 ```lisp
 (ql:quickload :harfarasta/export)
-
-;; Render to PNG (anti-aliased, transparent background)
 (rich-text/export:render-string "Hello" #p"hello.png"
   :as :png :family "Arial" :size 128 :color '(255 255 255))
-
-;; Render to OBJ (triangulated mesh)
-(rich-text/export:render-string "Hello" #p"hello.obj"
-  :as :obj :family "Helvetica" :size 1.0)
-
-;; Use a specific font file instead of discovery
-(rich-text/export:render-string "Test" #p"test.png"
-  :as :png :font-path "/path/to/font.ttf" :size 96 :color '(255 0 0))
-
-;; Run the built-in render tests (writes to export-tests/)
-(rich-text/export:render-tests)
 ```
-
-### `render-string` parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `text` | *(required)* | String to render |
-| `file` | *(required)* | Output pathname |
-| `:as` | `:png` | Output format: `:png` or `:obj` |
-| `:font-path` | `nil` | Path to a TTF/OTF file (overrides discovery) |
-| `:family` | `"Arial"` | Font family for discovery |
-| `:weight` | `:regular` | Font weight for discovery |
-| `:size` | `64` | Pixel height (PNG) or unit scale (OBJ) |
-| `:color` | `(255 255 255)` | RGB color list, 0-255 (PNG only) |
-| `:depth` | `nil` | Z extrusion depth in output units (OBJ only) |
-| `:alignment` | `:left` | `:left`, `:center`, or `:right` |
-| `:line-height` | `nil` | Y distance between lines in font units (default = upem) |
-| `:fallback-fonts` | `nil` | Font pointers tried for missing glyphs |
-| `:max-width` | `nil` | Max text width — pixels for PNG, output units for OBJ; triggers word wrapping |
-| `:wrap` | `:word` | `:word` — break at word boundaries (default); `:glyph` — break at any glyph |
-| `:png-size` | `nil` | `'(W H)` for a fixed canvas size, or `nil` for auto-fit (PNG only) 
-| `:anti-alias` | `t` | When `nil`, renderer will skip smoothstep and SDF steps |
 
 ## Mesh Package
 
 `harfarasta/mesh` converts glyph and text geometry into
-[`common-shapes:mesh`](https://git.sr.ht/~takeiteasy/common-shapes) objects, so glyph
-meshes compose with `common-shapes`' generators, CSG operations, and matrix transforms.
+[`common-shapes:mesh`](https://git.sr.ht/~takeiteasy/common-shapes) objects, so
+glyph meshes compose with `common-shapes`' generators, CSG operations, and
+matrix transforms. See [`docs/mesh.md`](docs/mesh.md) for the full API and
+conventions.
 
 ```lisp
 (ql:quickload :harfarasta/mesh)
-
 (rich-text:with-font (font "/path/to/font.ttf")
-  ;; A single glyph as a common-shapes:mesh
-  (let* ((glyph-id (rich-text:shaped-glyph-glyph-id
-                     (first (rich-text:shape-text font "A"))))
-         (mesh (rich-text/mesh:glyph-mesh font glyph-id :size 64)))
+  (let ((mesh (rich-text/mesh:text-mesh font "Hi" :size 64)))
     (format t "verts=~D tris=~D~%"
             (common-shapes:vertex-count mesh)
-            (common-shapes:triangle-count mesh)))
-
-  ;; Per-glyph meshes, positioned along the baseline
-  (dolist (mesh (rich-text/mesh:text-meshes font "Hi" :size 64))
-    (format t "verts=~D~%" (common-shapes:vertex-count mesh)))
-
-  ;; One merged mesh for the whole string
-  (let ((mesh (rich-text/mesh:text-mesh font "Hi" :size 64 :depth 0.1)))
-    (format t "merged verts=~D tris=~D dims=~D~%"
-            (common-shapes:vertex-count mesh)
-            (common-shapes:triangle-count mesh)
-            (common-shapes:mesh-dimensions mesh))))
+            (common-shapes:triangle-count mesh))))
 ```
-
-- `glyph-mesh`, `text-meshes`, and `text-mesh` share `:size` (scale factor, default 64),
-  `:depth` (extrudes to a 3D mesh, `nil` = flat 2D), `:fast` (earcut instead of constrained
-  Delaunay), and `:normals` (fills flat `+Z` normals on 2D meshes only -- extruded meshes
-  are left without normals, since `common-shapes:compute-normals` would smooth across the
-  hard front/back/side-wall seams).
-- Coordinates match `harfarasta/export`'s OBJ output: `scale = size / units-per-em`, glyph
-  advance/pen offsets are baked in, and Y is flipped from font-unit Y-down to +Y-up.
-- Triangle winding is counter-clockwise, as `common-shapes` expects.
-- `text-meshes` returns one mesh per glyph (useful for per-letter transforms/animation);
-  `text-mesh` returns a single mesh with all glyphs merged into one vertex/index namespace.
 
 ## License
 
