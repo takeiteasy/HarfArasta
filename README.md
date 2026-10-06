@@ -2,6 +2,21 @@
 
 HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shaping library for Common Lisp that uses [HarfBuzz](https://harfbuzz.github.io/) for text shaping. After shaping, it renders glyphs as SDF, MSDF, bitmap, or triangulated mesh -- suitable for GPU text rendering, game engines, UI toolkits, or offline export.
 
+## Installation
+
+From the takeiteasy Quicklisp dist:
+
+```lisp
+(ql-dist:install-dist "https://takeiteasy.github.io/ql-dist/dist/takeiteasy.txt")
+(ql:quickload :harfarasta)
+```
+
+Or clone into Quicklisp's local-projects:
+
+```sh
+git clone https://github.com/takeiteasy/HarfArasta ~/quicklisp/local-projects/HarfArasta
+```
+
 ## Features
 
 - **HarfBuzz text shaping** -- full OpenType layout (ligatures, kerning, BiDi, script/language support) (optional `:basic`)
