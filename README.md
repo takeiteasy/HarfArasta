@@ -4,7 +4,7 @@ HarfArasta (آراسته) is a platform/backend-agnostic text rendering and shap
 
 ## Installation
 
-From the takeiteasy Quicklisp dist:
+From the takeiteasy Quicklisp dist, which is served over HTTPS so Quicklisp needs [ql-https](https://github.com/takeiteasy/ql-dist#install):
 
 ```lisp
 (ql-dist:install-dist "https://takeiteasy.github.io/ql-dist/dist/takeiteasy.txt")
