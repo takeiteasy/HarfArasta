@@ -3,7 +3,7 @@
 This covers everything in core `harfarasta` that turns a glyph outline into a
 *raster* (a `bitmap`) rather than a triangle mesh. For mesh generation, see
 [`docs/triangulation.md`](triangulation.md); for converting meshes into
-`common-shapes:mesh` objects, see [`docs/mesh.md`](mesh.md).
+`cl-meshgen:mesh` objects, see [`docs/mesh.md`](mesh.md).
 
 ## Which one do I want?
 

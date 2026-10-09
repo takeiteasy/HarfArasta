@@ -3,7 +3,7 @@
 This document covers harfarasta's core glyph-to-triangle-mesh generation --
 `shape-to-mesh`, `shape-to-mesh-fast`, and their glyph/text-level wrappers, all
 in the core `harfarasta` package. For converting these meshes into
-`common-shapes:mesh` objects (for composing with `common-shapes`' generators,
+`cl-meshgen:mesh` objects (for composing with `cl-meshgen`' generators,
 CSG, and transforms), see [mesh.md](mesh.md) instead -- that's a separate,
 optional subsystem (`harfarasta/mesh`) built on top of the functions
 documented here.
@@ -83,7 +83,7 @@ Constrained Delaunay output follows the winding of the input contours as
 inserted. Ear-clipping's output winding follows whichever convention was
 auto-detected (see above) -- it does not normalize to a fixed winding across
 different fonts/glyphs. If you need a guaranteed winding (e.g. for
-`common-shapes`, which expects CCW), check it explicitly; `harfarasta/mesh`
+`cl-meshgen`, which expects CCW), check it explicitly; `harfarasta/mesh`
 does this as part of its own test suite.
 
 ## Choosing CDT vs. fast/earcut

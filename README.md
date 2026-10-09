@@ -25,7 +25,7 @@ git clone https://github.com/takeiteasy/HarfArasta ~/quicklisp/local-projects/Ha
 - **Bitmap rendering** -- anti-aliased grayscale coverage bitmaps via SDF thresholding by default, fast direct rendering optionally (`:anti-alias` or `:fast`)
 - **Mesh generation** -- constrained Delaunay triangulation of glyph outlines (via `cl-constrained-delaunay`) or ear-clipping (`:fast`, via `cl-earcut`)
 - **PNG/OBJ export** -- render strings to PNG images or Wavefront OBJ meshes (via `harfarasta/export`)
-- **common-shapes integration** -- glyph and text meshes as `common-shapes:mesh` objects for composing with `common-shapes` generators, CSG, and transforms (via `harfarasta/mesh`)
+- **cl-meshgen integration** -- glyph and text meshes as `cl-meshgen:mesh` objects for composing with `cl-meshgen` generators, CSG, and transforms (via `harfarasta/mesh`)
 - **Extra shaping** -- automatic line breaking at a configurable max width (word or glyph boundary modes), newline support and alignment.
 - **WOFF1/WOFF2** -- Web Open Font Format 1.0/2.0
 
@@ -41,7 +41,7 @@ git clone https://github.com/takeiteasy/HarfArasta ~/quicklisp/local-projects/Ha
 | [`docs/shaping.md`](docs/shaping.md) | Font loading/lifecycle, HarfBuzz shaping, word wrap, font inspection, fallback fonts, WOFF1/WOFF2 |
 | [`docs/rendering.md`](docs/rendering.md) | SDF, MSDF, and bitmap glyph rendering |
 | [`docs/triangulation.md`](docs/triangulation.md) | Core glyph-to-mesh triangulation (constrained Delaunay / earcut) |
-| [`docs/mesh.md`](docs/mesh.md) | `harfarasta/mesh` -- `common-shapes:mesh` integration |
+| [`docs/mesh.md`](docs/mesh.md) | `harfarasta/mesh` -- `cl-meshgen:mesh` integration |
 | [`docs/export.md`](docs/export.md) | `harfarasta/export` -- `render-string` for PNG/OBJ output |
 | [`docs/fontstash.md`](docs/fontstash.md) | `harfarasta/fontstash` -- texture atlas / glyph packing |
 
@@ -113,7 +113,7 @@ mkdir -p build && cd build && cmake .. && make
 | `harfarasta/harfbuzz` | Internal CFFI bindings to HarfBuzz |
 | `harfarasta/woff2` | Internal CFFI bindings to libwoff2shim for WOFF2 decoding |
 | `harfarasta/export` | PNG and OBJ export utilities |
-| `harfarasta/mesh` | `common-shapes:mesh` integration for glyph/text meshes |
+| `harfarasta/mesh` | `cl-meshgen:mesh` integration for glyph/text meshes |
 | `harfarasta/fontstash` | Font atlas / glyph packing for GPU text rendering |
 | `harfarasta/tests` | Tests using `harfarasta/export`, `harfarasta/mesh`, and `harfarasta/fontstash` |
 
@@ -125,7 +125,7 @@ mkdir -p build && cd build && cmake .. && make
 - [font-discovery](https://shinmera.com/project/font-discovery) -- system font lookup
 - [cl-earcut](https://git.sr.ht/~takeiteasy/cl-earcut) -- ear-clipping triangulation (`:fast` mesh generation)
 - [cl-constrained-delaunay](https://git.sr.ht/~takeiteasy/cl-constrained-delaunay) -- constrained Delaunay triangulation (default mesh generation)
-- [common-shapes](https://git.sr.ht/~takeiteasy/common-shapes) -- mesh data structure & shape/CSG interop (`harfarasta/mesh` only)
+- [cl-meshgen](https://git.sr.ht/~takeiteasy/cl-meshgen) -- mesh data structure & shape/CSG interop (`harfarasta/mesh` only)
 - [zpng](https://www.xach.com/lisp/zpng/) -- PNG export (`harfarasta/export` only)
 
 ## Export Package
@@ -144,8 +144,8 @@ examples.
 ## Mesh Package
 
 `harfarasta/mesh` converts glyph and text geometry into
-[`common-shapes:mesh`](https://git.sr.ht/~takeiteasy/common-shapes) objects, so
-glyph meshes compose with `common-shapes`' generators, CSG operations, and
+[`cl-meshgen:mesh`](https://git.sr.ht/~takeiteasy/cl-meshgen) objects, so
+glyph meshes compose with `cl-meshgen`' generators, CSG operations, and
 matrix transforms. See [`docs/mesh.md`](docs/mesh.md) for the full API and
 conventions.
 
@@ -154,8 +154,8 @@ conventions.
 (rich-text:with-font (font "/path/to/font.ttf")
   (let ((mesh (rich-text/mesh:text-mesh font "Hi" :size 64)))
     (format t "verts=~D tris=~D~%"
-            (common-shapes:vertex-count mesh)
-            (common-shapes:triangle-count mesh))))
+            (cl-meshgen:vertex-count mesh)
+            (cl-meshgen:triangle-count mesh))))
 ```
 
 ## License

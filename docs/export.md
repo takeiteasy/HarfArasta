@@ -79,7 +79,7 @@ writer:
   glyph shares one vertex namespace across `v`/`f` lines.
 
 This scale/offset/remap logic is also what `harfarasta/mesh` mirrors to
-produce `common-shapes:mesh` objects instead of an OBJ file -- see
+produce `cl-meshgen:mesh` objects instead of an OBJ file -- see
 [`docs/mesh.md`](mesh.md).
 
 ## Tests

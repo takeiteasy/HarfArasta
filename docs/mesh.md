@@ -1,8 +1,8 @@
 # harfarasta/mesh
 
 `harfarasta/mesh` converts glyph and text geometry produced by the core
-`harfarasta` library into [`common-shapes:mesh`](https://git.sr.ht/~takeiteasy/common-shapes)
-objects, so glyph meshes compose with `common-shapes`' generators, CSG
+`harfarasta` library into [`cl-meshgen:mesh`](https://git.sr.ht/~takeiteasy/cl-meshgen)
+objects, so glyph meshes compose with `cl-meshgen`' generators, CSG
 operations, and matrix/serialization utilities.
 
 Package: `harfarasta/mesh` (nickname `rich-text/mesh`).
@@ -13,13 +13,13 @@ Package: `harfarasta/mesh` (nickname `rich-text/mesh`).
 (ql:quickload :harfarasta/mesh)
 ```
 
-Depends on `harfarasta` and `common-shapes`.
+Depends on `harfarasta` and `cl-meshgen`.
 
 ## API
 
 ### `glyph-mesh (font glyph-id &key (size 64) depth fast normals (segments-per-edge 8))`
 
-Triangulate a single glyph into a `common-shapes:mesh`. Returns `NIL` for
+Triangulate a single glyph into a `cl-meshgen:mesh`. Returns `NIL` for
 blank glyphs (e.g. space).
 
 - `size` -- target coordinate scale. Font-unit coordinates are divided by the
@@ -38,7 +38,7 @@ blank glyphs (e.g. space).
 ### `text-meshes (font text &key (size 64) depth fast normals ...)`
 
 Shape `text` with `font` and triangulate each visible glyph into a positioned
-`common-shapes:mesh`. Returns a list of meshes, one per rendered glyph, each
+`cl-meshgen:mesh`. Returns a list of meshes, one per rendered glyph, each
 already translated to its pen position -- so glyph identity and order are
 preserved for per-letter transforms or animation.
 
@@ -51,7 +51,7 @@ Accepts the same `size`/`depth`/`fast`/`normals`/`segments-per-edge` keys as
 ### `text-mesh (font text &key (size 64) depth fast normals ...)`
 
 Same shaping/layout as `text-meshes`, but returns a single merged
-`common-shapes:mesh` with all glyphs sharing one vertex/index namespace
+`cl-meshgen:mesh` with all glyphs sharing one vertex/index namespace
 (indices remapped with a running vertex offset, mirroring
 `harfarasta/export`'s OBJ writer). Returns a valid but empty mesh (zero
 vertices/indices, correct `dimensions`) if `text` has no visible glyphs.
@@ -63,17 +63,17 @@ Mesh coordinates match `harfarasta/export`'s OBJ output exactly:
 - `scale = size / units-per-em`.
 - Each glyph's pen offset (in font units) is baked into its vertices before
   scaling.
-- Y is flipped from font-unit Y-down to +Y-up, matching `common-shapes`'
+- Y is flipped from font-unit Y-down to +Y-up, matching `cl-meshgen`'
   own convention.
-- Triangle winding is counter-clockwise, as `common-shapes`' `triangle-normal`
+- Triangle winding is counter-clockwise, as `cl-meshgen`' `triangle-normal`
   and `compute-normals` expect.
 - The mesh sits with its baseline at the origin and is roughly `size` units
-  tall (not centered at the origin, unlike `common-shapes`' own shape
+  tall (not centered at the origin, unlike `cl-meshgen`' own shape
   generators).
 
 ## Normals
 
-`common-shapes:compute-normals` errors on 2D meshes and, for extruded (3D)
+`cl-meshgen:compute-normals` errors on 2D meshes and, for extruded (3D)
 meshes, averages normals across adjacent faces -- which would smooth across
 the hard seams between a glyph's front face, back face, and extrusion side
 walls. To avoid surprising results:
@@ -82,7 +82,7 @@ walls. To avoid surprising results:
   flat `+Z` normal per vertex.
 - Extruded (3D, `depth` non-`NIL`) meshes: `normals` is always `NIL` here.
   Callers who want normals on an extruded mesh should compute them explicitly
-  (e.g. via `common-shapes:compute-normals`, understanding it will smooth
+  (e.g. via `cl-meshgen:compute-normals`, understanding it will smooth
   across seams) rather than relying on this package to guess the right
   policy.
 
@@ -95,19 +95,19 @@ walls. To avoid surprising results:
                      (first (rich-text:shape-text font "A"))))
          (mesh (rich-text/mesh:glyph-mesh font glyph-id :size 64)))
     (format t "verts=~D tris=~D~%"
-            (common-shapes:vertex-count mesh)
-            (common-shapes:triangle-count mesh)))
+            (cl-meshgen:vertex-count mesh)
+            (cl-meshgen:triangle-count mesh)))
 
   ;; Per-glyph meshes for "Hi", positioned along the baseline
   (dolist (mesh (rich-text/mesh:text-meshes font "Hi" :size 64))
-    (format t "verts=~D~%" (common-shapes:vertex-count mesh)))
+    (format t "verts=~D~%" (cl-meshgen:vertex-count mesh)))
 
   ;; One merged, extruded mesh for the whole string
   (let ((mesh (rich-text/mesh:text-mesh font "Hi" :size 64 :depth 0.1)))
     (format t "merged verts=~D tris=~D dims=~D~%"
-            (common-shapes:vertex-count mesh)
-            (common-shapes:triangle-count mesh)
-            (common-shapes:mesh-dimensions mesh))))
+            (cl-meshgen:vertex-count mesh)
+            (cl-meshgen:triangle-count mesh)
+            (cl-meshgen:mesh-dimensions mesh))))
 ```
 
 ## Tests

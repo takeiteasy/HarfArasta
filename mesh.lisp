@@ -1,11 +1,11 @@
 ;;;; src/mesh/mesh.lisp
-;;;; common-shapes mesh integration for harfarasta
+;;;; cl-meshgen mesh integration for harfarasta
 
 (defpackage #:harfarasta/mesh
   (:nicknames #:rich-text/mesh)
   (:use #:cl)
   (:local-nicknames (#:hb #:harfarasta/harfbuzz)
-                     (#:cs #:common-shapes))
+                     (#:cs #:cl-meshgen))
   (:export
    #:glyph-mesh
    #:text-meshes
@@ -40,7 +40,7 @@ font-unit Y-down to +Y-up, matching harfarasta/export's OBJ writer."
 
 (defun %flat-z-normals (vert-count)
   "Return a fresh (VERT-COUNT * 3) single-float array of +Z normals, for
-flat (unextruded) 2D meshes embedded in a common-shapes mesh."
+flat (unextruded) 2D meshes embedded in a cl-meshgen mesh."
   (let ((out (make-array (* vert-count 3) :element-type 'single-float
                                            :initial-element 0.0)))
     (loop for i from 0 below vert-count
@@ -49,11 +49,11 @@ flat (unextruded) 2D meshes embedded in a common-shapes mesh."
 
 (defun %entry->mesh (vertices indices &key depth normals scale (pen-x 0) (pen-y 0))
   "Convert a single harfarasta VERTICES/INDICES pair (as returned by
-SHAPE-TO-MESH / SHAPE-TO-MESH-FAST) into a COMMON-SHAPES:MESH, applying SCALE
+SHAPE-TO-MESH / SHAPE-TO-MESH-FAST) into a CL-MESHGEN:MESH, applying SCALE
 and the (PEN-X . PEN-Y) glyph offset. DEPTH is only used to determine stride
 (pass the same value used when the mesh was triangulated). When NORMALS is
 true and DEPTH is NIL, a flat +Z normal is filled per vertex; extruded (3D)
-meshes never get normals here -- COMMON-SHAPES:COMPUTE-NORMALS would smooth
+meshes never get normals here -- CL-MESHGEN:COMPUTE-NORMALS would smooth
 across the hard front/back/side-wall seams, so callers wanting normals on an
 extruded mesh should compute them explicitly."
   (let* ((stride (if depth 3 2))
@@ -70,7 +70,7 @@ extruded mesh should compute them explicitly."
 ;;; --- Public API ---
 
 (defun glyph-mesh (font glyph-id &key (size 64) depth fast normals (segments-per-edge 8))
-  "Triangulate GLYPH-ID from FONT into a COMMON-SHAPES:MESH.
+  "Triangulate GLYPH-ID from FONT into a CL-MESHGEN:MESH.
 SIZE is the target coordinate scale (font units are divided by the font's
 units-per-em and multiplied by SIZE). DEPTH, when non-NIL, extrudes the glyph
 along Z by DEPTH units (mesh becomes 3D). FAST selects ear-clipping (earcut)
@@ -92,7 +92,7 @@ space)."
                                    alignment line-height max-width (wrap :word)
                                    fallback-fonts basic)
   "Shape TEXT with FONT and triangulate each visible glyph into a positioned
-COMMON-SHAPES:MESH. Returns a list of meshes, one per rendered glyph, each
+CL-MESHGEN:MESH. Returns a list of meshes, one per rendered glyph, each
 already translated to its pen position (glyph identity/order is preserved,
 so callers can transform or animate letters individually). See GLYPH-MESH for
 SIZE/DEPTH/FAST/NORMALS. The remaining keys are passed through to
@@ -115,7 +115,7 @@ RICH-TEXT:TEXT-TO-MESHES / TEXT-TO-MESHES-FAST for shaping and layout."
                                  alignment line-height max-width (wrap :word)
                                  fallback-fonts basic)
   "Shape TEXT with FONT and triangulate it into a single merged
-COMMON-SHAPES:MESH (all glyphs share one vertex/index namespace). See
+CL-MESHGEN:MESH (all glyphs share one vertex/index namespace). See
 GLYPH-MESH for SIZE/DEPTH/FAST/NORMALS; the remaining keys are passed through
 to RICH-TEXT:TEXT-TO-MESHES / TEXT-TO-MESHES-FAST for shaping and layout.
 Returns a mesh with zero vertices/indices (but valid DIMENSIONS) if TEXT has

@@ -2,7 +2,7 @@
 
 (defpackage #:harfarasta/tests
   (:use #:cl #:harfarasta #:harfarasta/export)
-  (:local-nicknames (#:cs #:common-shapes)
+  (:local-nicknames (#:cs #:cl-meshgen)
                      (#:hmesh #:harfarasta/mesh))
   (:export #:render-tests #:mesh-tests))
 
@@ -24,7 +24,7 @@ flat, stride-2 VERTICES array. Positive = counter-clockwise."
 
 (defun mesh-tests (&key font-path)
   "Exercise harfarasta/mesh: build glyph and text meshes and assert they are
-well-formed COMMON-SHAPES:MESH objects with the expected array types,
+well-formed CL-MESHGEN:MESH objects with the expected array types,
 dimensions, and (for 2D) counter-clockwise winding."
   (let ((path (or (and font-path (pathname font-path))
                   (rich-text:find-font-path :family "Arial"))))
@@ -35,7 +35,7 @@ dimensions, and (for 2D) counter-clockwise winding."
       (format t "1. glyph-mesh: 'A' at size 64, 2D~%")
       (let* ((glyph-id (%glyph-id-for-char font #\A))
              (mesh (hmesh:glyph-mesh font glyph-id :size 64)))
-        (assert (cs:mesh-p mesh) () "glyph-mesh did not return a common-shapes mesh")
+        (assert (cs:mesh-p mesh) () "glyph-mesh did not return a cl-meshgen mesh")
         (assert (typep (cs:mesh-vertices mesh) '(simple-array single-float (*))) ()
                 "glyph-mesh vertices have the wrong array type")
         (assert (typep (cs:mesh-indices mesh) '(simple-array (unsigned-byte 32) (*))) ()
@@ -79,7 +79,7 @@ dimensions, and (for 2D) counter-clockwise winding."
              (sum-tris (reduce #'+ per-glyph :key #'cs:triangle-count :initial-value 0)))
         (assert (= (length per-glyph) 2) () "text-meshes should return one mesh per glyph")
         (dolist (m per-glyph)
-          (assert (cs:mesh-p m) () "text-meshes entry is not a common-shapes mesh"))
+          (assert (cs:mesh-p m) () "text-meshes entry is not a cl-meshgen mesh"))
         (assert (= (cs:vertex-count merged) sum-verts) ()
                 "merged text-mesh vertex count should equal sum of per-glyph vertex counts")
         (assert (= (cs:triangle-count merged) sum-tris) ()

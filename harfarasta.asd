@@ -4,7 +4,7 @@
   :description "CFFI bindings to HarfBuzz for harfarasta"
   :author "George Watson <gigolo@hotmail.co.uk>"
   :license "GPLv3"
-  :version "0.1.0"
+  :version "0.1.1"
   :depends-on (#:cffi)
   :serial t
   :components ((:file "harfbuzz")))
@@ -13,7 +13,7 @@
   :description "CFFI bindings to libwoff2shim for WOFF2 decoding"
   :author "George Watson <gigolo@hotmail.co.uk>"
   :license "GPLv3"
-  :version "0.1.0"
+  :version "0.1.1"
   :depends-on (#:cffi)
   :serial t
   :components ((:file "woff2")))
@@ -22,7 +22,7 @@
   :description "Platform/backend-agnostic text rendering and shaping for Common Lisp"
   :author "George Watson <gigolo@hotmail.co.uk>"
   :license "GPLv3"
-  :version "0.1.0"
+  :version "0.1.1"
   :depends-on (#:harfarasta/harfbuzz
                #:harfarasta/woff2
                #:font-discovery
@@ -44,7 +44,7 @@
   :description "Font atlas / glyph packing for harfarasta"
   :author "George Watson <gigolo@hotmail.co.uk>"
   :license "GPLv3"
-  :version "0.1.0"
+  :version "0.1.1"
   :depends-on (#:harfarasta #:zpng)
   :serial t
   :components ((:file "fontstash")))
@@ -53,17 +53,17 @@
   :description "PNG and OBJ export utilities for harfarasta"
   :author "George Watson <gigolo@hotmail.co.uk>"
   :license "GPLv3"
-  :version "0.1.0"
+  :version "0.1.1"
   :depends-on (#:harfarasta #:zpng)
   :serial t
   :components ((:file "export")))
 
 (asdf:defsystem #:harfarasta/mesh
-  :description "common-shapes mesh integration for harfarasta"
+  :description "cl-meshgen mesh integration for harfarasta"
   :author "George Watson <gigolo@hotmail.co.uk>"
   :license "GPLv3"
-  :version "0.1.0"
-  :depends-on (#:harfarasta #:common-shapes)
+  :version "0.1.1"
+  :depends-on (#:harfarasta #:cl-meshgen)
   :serial t
   :components ((:file "mesh")))
 
